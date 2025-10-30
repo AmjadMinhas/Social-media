@@ -1,0 +1,102 @@
+*{
+    direction:rtl;
+    text-align:right;
+}
+.ml-auto {
+    margin-left: initial;
+    margin-right: auto;
+    width: auto;
+}
+.flex-1.overflow-y-auto .ml-auto {
+    margin-left: auto;
+    margin-right: initial;
+    width: initial;
+}
+.space-x-2>:not([hidden])~:not([hidden]) {
+    margin-right: .5rem ;
+    margin-left: .5rem ;
+}
+.mr-10 {
+    margin-right: initial;
+    margin-left: 2.5rem;
+}
+.space-x-8>:not([hidden])~:not([hidden]) {
+    margin-right:2rem;
+    margin-left: 2rem;
+}
+.right-\[-18px\] {
+    right: initial;
+    left: -18px;
+}
+.text-left {
+    text-align: inherit;
+    text-align: right;
+}
+.pl-4 {
+    padding-left: initial;
+    padding-right: 1rem;
+}
+.space-x-3>:not([hidden])~:not([hidden]) {
+    margin-right: .75rem;
+    margin-left: .75rem;
+}
+.space-x-4>:not([hidden])~:not([hidden]) {
+    margin-right: 1rem;
+    margin-left: 1rem;
+}
+.space-x-1>:not([hidden])~:not([hidden]) {
+    margin-right: .25rem;
+    margin-left: .25rem;
+    text-align: center;
+}
+.ring-white {
+    text-align: center;
+}
+.flex.items-center.bg-secondary\/70.h-8.px-5.md\:px-10.lg\:px-20.\32 xl\:px-60 {
+    overflow: hidden;
+}
+.right-0 {
+    right: initial;
+    left:0;
+}
+.pl-6 {
+    padding-left:initial;
+    padding-right: 1.5rem;
+}
+.mr-2 {
+    margin-right: initial;
+    margin-left: .5rem;
+}
+.mr-4 {
+     margin-right: initial;
+    margin-left: 1rem;
+}
+a.hover\:bg-\[\#F6F7F9\].hover\:rounded-full.w-\[fit-content\].p-2 svg,
+.text-slate-300,
+.flex.gap-x-8.hover\:bg-slate-200.rounded-lg.py-1.justify-between.items-center.w-full.cursor-pointer.border.border-slate-100.pl-1.pr-2 span svg{
+    rotate: 180deg;
+}
+.w-full.bg-white.text-center.py-8.border > * {
+    text-align: center;
+}
+.w-full.flex.items-center.text-xs span,.flex.space-x-2.hover\:bg-gray-50.cursor-pointer.px-4.py-3.border-b.bg-gray-50 p.text-slate-500.text-xs.truncate,
+.text-slate-500.text-xs.truncate,.text-slate-500.truncate.flex.items-center span{
+    direction: ltr;
+}
+.flex.justify-between.text-sm.border-b
+{
+    z-index: 99999999;
+    position: relative;
+}
+@media (min-width: 768px) {
+    .md\:pl-8 {
+        padding-left: initial;
+        padding-right: 2rem;
+    }
+}
+@media (min-width: 768px) {
+    .md\:space-x-2>:not([hidden])~:not([hidden]) {
+        margin-right:.5rem;
+        margin-left: .5rem;
+    }
+}

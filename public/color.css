@@ -1,0 +1,23 @@
+.bg-secondary\/70 {
+    background-color: #4da9e7b3;
+}
+.text-primary,.text-secondary  {
+    color: #4DA9E7;
+}
+.bg-secondary\/10 {
+    background-color: #4da9e71a;
+}
+.border-primary {
+    border-color: #4DA9E7;
+}
+.bg-primary {
+    background-color: #4DA9E7;
+}
+.hover\:bg-secondary:hover {
+    background-color: transparent;
+    color: #4DA9E7;
+}
+.apexcharts-legend-marker {
+    color: #000 !important;
+    background: #000 !important;
+}
