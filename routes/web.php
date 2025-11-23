@@ -93,6 +93,18 @@ Route::middleware(['auth:user,admin'])->group(function () {
     Route::put('/profile/password', [App\Http\Controllers\ProfileController::class, 'updatePassword']);
     Route::put('/profile/tfa', [App\Http\Controllers\ProfileController::class, 'updateTfa']);
     Route::put('/profile/organization', [App\Http\Controllers\ProfileController::class, 'updateOrganization']);
+
+    // Social Media OAuth Routes
+    Route::get('/auth/facebook', [App\Http\Controllers\User\SocialAccountController::class, 'redirectToFacebook']);
+    Route::get('/auth/facebook/callback', [App\Http\Controllers\User\SocialAccountController::class, 'handleFacebookCallback']);
+    Route::post('/auth/facebook/save-page', [App\Http\Controllers\User\SocialAccountController::class, 'saveFacebookPage']);
+    Route::get('/auth/linkedin', [App\Http\Controllers\User\SocialAccountController::class, 'redirectToLinkedIn']);
+    Route::get('/auth/linkedin/callback', [App\Http\Controllers\User\SocialAccountController::class, 'handleLinkedInCallback']);
+    Route::get('/auth/instagram', [App\Http\Controllers\User\SocialAccountController::class, 'redirectToInstagram']);
+    Route::get('/auth/instagram/callback', [App\Http\Controllers\User\SocialAccountController::class, 'handleInstagramCallback']);
+    Route::post('/auth/instagram/save-account', [App\Http\Controllers\User\SocialAccountController::class, 'saveInstagramAccount']);
+    Route::get('/auth/twitter', [App\Http\Controllers\User\SocialAccountController::class, 'redirectToTwitter']);
+    Route::get('/auth/twitter/callback', [App\Http\Controllers\User\SocialAccountController::class, 'handleTwitterCallback']);
 });
 
 Route::middleware(['auth:user'])->group(function () {
@@ -167,6 +179,16 @@ Route::middleware(['auth:user'])->group(function () {
                 Route::get('/automation/basic/{uuid}/edit', [App\Http\Controllers\User\CannedReplyController::class, 'edit'])->name('cannedReply.edit');
                 Route::put('/automation/basic/{uuid}', [App\Http\Controllers\User\CannedReplyController::class, 'update'])->name('cannedReply.update');
                 Route::delete('/automation/basic/{uuid}', [App\Http\Controllers\User\CannedReplyController::class, 'delete'])->name('cannedReply.destroy');
+
+                Route::get('/post-scheduler/{uuid?}', [App\Http\Controllers\User\PostSchedulerController::class, 'index'])->name('post-scheduler');
+                Route::post('/post-scheduler', [App\Http\Controllers\User\PostSchedulerController::class, 'store']);
+                Route::post('/post-scheduler/{uuid}', [App\Http\Controllers\User\PostSchedulerController::class, 'update']);
+                Route::delete('/post-scheduler/{uuid}', [App\Http\Controllers\User\PostSchedulerController::class, 'delete']);
+
+                // Social Media Account Routes
+                Route::get('/social-accounts', [App\Http\Controllers\User\SocialAccountController::class, 'index'])->name('social-accounts');
+                Route::delete('/social-accounts/{uuid}', [App\Http\Controllers\User\SocialAccountController::class, 'destroy']);
+                Route::post('/social-accounts/{uuid}/verify', [App\Http\Controllers\User\SocialAccountController::class, 'verify']);
 
                 Route::get('/support/{uuid?}', [App\Http\Controllers\User\TicketController::class, 'index'])->name('support');
                 Route::post('/support', [App\Http\Controllers\User\TicketController::class, 'store']);

@@ -22,6 +22,11 @@ class Kernel extends ConsoleKernel
             ->everyMinute()
             ->withoutOverlapping();
 
+        // Process scheduled social media posts
+        $schedule->command('posts:process-scheduled')
+            ->everyMinute()
+            ->withoutOverlapping();
+
         /*$schedule->command('queue:work --queue=campaign-messages,campaign-logs --stop-when-empty')
             ->everyMinute()
             ->withoutOverlapping();*/

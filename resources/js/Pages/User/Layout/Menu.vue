@@ -57,6 +57,21 @@
                         <span :class="menuIconsOnly ? 'hidden' : ''">{{ $t('Automation') }}</span>
                     </Link>
                 </li>
+                <li class="hover:bg-slate-50 hover:text-black rounded-[5px] px-2 truncate" :class="$page.url.startsWith('/post-scheduler') ? 'bg-slate-50 text-black' : ''">
+                    <Link rel="noopener noreferrer" href="/post-scheduler" class="flex items-center p-2 space-x-3 rounded-md">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm0-3V4m16 1V4M4 11h16m-9 4h2m-2 3h2"/></svg>
+                        <span :class="menuIconsOnly ? 'hidden' : ''">{{ $t('Post Scheduler') }}</span>
+                    </Link>
+                </li>
+                <li class="hover:bg-slate-50 hover:text-black rounded-[5px] px-2 truncate" :class="$page.url.startsWith('/social-accounts') ? 'bg-slate-50 text-black' : ''">
+                    <Link rel="noopener noreferrer" href="/social-accounts" class="flex items-center p-2 space-x-3 rounded-md">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81c1.66 0 3-1.34 3-3s-1.34-3-3-3s-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65c0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92s-1.31-2.92-2.92-2.92z"/></svg>
+                        <span :class="menuIconsOnly ? 'hidden' : ''">{{ $t('Social Accounts') }}</span>
+                    </Link>
+                </li>
+
+
+                
             </ul>
 
             <div class="px-4">
