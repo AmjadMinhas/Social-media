@@ -135,6 +135,18 @@ const formatDate = (dateString) => {
                             </div>
                             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/></svg>
                         </button>
+
+                        <!-- TikTok -->
+                        <button @click="openConnectModal('tiktok', 'TikTok')" class="flex items-center justify-between p-4 border-2 border-gray-200 rounded-lg hover:border-black hover:bg-gray-50 transition">
+                            <div class="flex items-center space-x-3">
+                                <div v-html="getPlatformIcon('tiktok')"></div>
+                                <div class="text-left">
+                                    <div class="font-semibold">TikTok</div>
+                                    <div class="text-sm text-gray-500">{{ $t('Connect Profile') }}</div>
+                                </div>
+                            </div>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/></svg>
+                        </button>
                     </div>
                 </div>
 

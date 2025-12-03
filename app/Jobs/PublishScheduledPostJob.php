@@ -172,8 +172,13 @@ class PublishScheduledPostJob implements ShouldQueue
                 return $service->publishPost($account, $post);
 
             case 'tiktok':
-                // TODO: Implement TikTok service
-                return ['success' => false, 'error' => 'TikTok integration not yet implemented'];
+                $service = app(\App\Services\SocialMedia\TikTokService::class);
+                // Note: TikTok requires video content
+                if (empty($post->media) || !is_array($post->media) || count($post->media) === 0) {
+                    return ['success' => false, 'error' => 'TikTok requires video content'];
+                }
+                // For now, return error as TikTok posting requires video upload
+                return ['success' => false, 'error' => 'TikTok video posting requires additional implementation'];
 
             default:
                 return ['success' => false, 'error' => "Unknown platform: {$platform}"];

@@ -64,15 +64,37 @@ class LinkedInService
     public function getUserProfile($accessToken)
     {
         try {
+            // Get basic profile using v2 API (doesn't require openid scope)
             $response = Http::withHeaders([
                 'Authorization' => "Bearer {$accessToken}",
-            ])->get("{$this->baseUrl}/userinfo");
+            ])->get("{$this->baseUrl}/me");
 
             if ($response->failed()) {
                 throw new Exception('Failed to get user profile: ' . $response->body());
             }
 
-            return $response->json();
+            $profile = $response->json();
+            
+            // Get email separately if needed
+            $emailResponse = Http::withHeaders([
+                'Authorization' => "Bearer {$accessToken}",
+            ])->get("{$this->baseUrl}/emailAddress?q=members&projection=(elements*(handle~))");
+            
+            $email = null;
+            if ($emailResponse->successful()) {
+                $emailData = $emailResponse->json();
+                $email = $emailData['elements'][0]['handle~']['emailAddress'] ?? null;
+            }
+            
+            // Format response to match expected structure
+            return [
+                'sub' => $profile['id'] ?? null,
+                'name' => ($profile['localizedFirstName'] ?? '') . ' ' . ($profile['localizedLastName'] ?? ''),
+                'given_name' => $profile['localizedFirstName'] ?? null,
+                'family_name' => $profile['localizedLastName'] ?? null,
+                'email' => $email,
+                'picture' => $profile['profilePicture']['displayImage~']['elements'][0]['identifiers'][0]['identifier'] ?? null,
+            ];
         } catch (Exception $e) {
             Log::error('LinkedIn get profile error: ' . $e->getMessage());
             throw $e;
@@ -298,4 +320,5 @@ class LinkedInService
         }
     }
 }
+
 

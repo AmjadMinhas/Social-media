@@ -30,7 +30,6 @@ return [
         'client_secret' => env('LINKEDIN_CLIENT_SECRET'),
         'redirect_uri' => env('APP_URL') . '/auth/linkedin/callback',
         'scopes' => [
-            'openid',
             'profile',
             'w_member_social',
             'email',

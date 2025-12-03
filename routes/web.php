@@ -105,6 +105,8 @@ Route::middleware(['auth:user,admin'])->group(function () {
     Route::post('/auth/instagram/save-account', [App\Http\Controllers\User\SocialAccountController::class, 'saveInstagramAccount']);
     Route::get('/auth/twitter', [App\Http\Controllers\User\SocialAccountController::class, 'redirectToTwitter']);
     Route::get('/auth/twitter/callback', [App\Http\Controllers\User\SocialAccountController::class, 'handleTwitterCallback']);
+    Route::get('/auth/tiktok', [App\Http\Controllers\User\SocialAccountController::class, 'redirectToTikTok']);
+    Route::get('/auth/tiktok/callback', [App\Http\Controllers\User\SocialAccountController::class, 'handleTikTokCallback']);
 });
 
 Route::middleware(['auth:user'])->group(function () {

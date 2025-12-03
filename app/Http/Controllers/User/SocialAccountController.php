@@ -8,6 +8,7 @@ use App\Services\SocialMedia\FacebookService;
 use App\Services\SocialMedia\LinkedInService;
 use App\Services\SocialMedia\InstagramService;
 use App\Services\SocialMedia\TwitterService;
+use App\Services\SocialMedia\TikTokService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -20,17 +21,20 @@ class SocialAccountController extends Controller
     protected $linkedinService;
     protected $instagramService;
     protected $twitterService;
+    protected $tiktokService;
 
     public function __construct(
         FacebookService $facebookService, 
         LinkedInService $linkedinService,
         InstagramService $instagramService,
-        TwitterService $twitterService
+        TwitterService $twitterService,
+        TikTokService $tiktokService
     ) {
         $this->facebookService = $facebookService;
         $this->linkedinService = $linkedinService;
         $this->instagramService = $instagramService;
         $this->twitterService = $twitterService;
+        $this->tiktokService = $tiktokService;
     }
 
     /**
@@ -662,6 +666,114 @@ class SocialAccountController extends Controller
             return redirect('/social-accounts')->with('status', [
                 'type' => 'error',
                 'message' => __('Failed to connect Twitter: ') . $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Redirect to TikTok OAuth
+     */
+    public function redirectToTikTok()
+    {
+        $state = bin2hex(random_bytes(16));
+        session(['oauth_state' => $state]);
+        session(['oauth_organization_id' => session()->get('current_organization')]);
+        session(['oauth_popup' => request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest']);
+
+        return redirect($this->tiktokService->getAuthorizationUrl($state));
+    }
+
+    /**
+     * Handle TikTok OAuth callback
+     */
+    public function handleTikTokCallback(Request $request)
+    {
+        try {
+            // Verify state
+            if ($request->state !== session('oauth_state')) {
+                throw new \Exception('Invalid state parameter');
+            }
+
+            if ($request->has('error')) {
+                throw new \Exception('User denied authorization: ' . $request->error_description);
+            }
+
+            // Get access token
+            $tokenData = $this->tiktokService->getAccessToken($request->code);
+            $accessToken = $tokenData['access_token'];
+            $refreshToken = $tokenData['refresh_token'] ?? null;
+            $expiresIn = $tokenData['expires_in'] ?? 86400;
+            $openId = $tokenData['open_id'];
+
+            if (!$openId) {
+                throw new \Exception('Failed to get TikTok user ID');
+            }
+
+            // Get user profile
+            $profile = $this->tiktokService->getUserProfile($accessToken);
+
+            $organizationId = session('oauth_organization_id');
+
+            // Check if account already exists
+            $existingAccount = SocialAccount::where('organization_id', $organizationId)
+                ->where('platform', 'tiktok')
+                ->where('platform_user_id', $openId)
+                ->first();
+
+            $accountData = [
+                'uuid' => $existingAccount ? $existingAccount->uuid : Str::uuid(),
+                'organization_id' => $organizationId,
+                'user_id' => auth()->id(),
+                'platform' => 'tiktok',
+                'platform_user_id' => $openId,
+                'platform_username' => $profile['username'] ?? $profile['display_name'] ?? 'TikTok User',
+                'access_token' => $accessToken,
+                'refresh_token' => $refreshToken,
+                'token_expires_at' => Carbon::now()->addSeconds($expiresIn),
+                'platform_data' => [
+                    'open_id' => $openId,
+                    'union_id' => $profile['union_id'] ?? null,
+                    'username' => $profile['username'] ?? null,
+                    'display_name' => $profile['display_name'] ?? null,
+                    'avatar_url' => $profile['avatar_url'] ?? null,
+                ],
+                'is_active' => true,
+            ];
+
+            if ($existingAccount) {
+                $existingAccount->update($accountData);
+                $message = __('TikTok account reconnected successfully!');
+            } else {
+                SocialAccount::create($accountData);
+                $message = __('TikTok account connected successfully!');
+            }
+
+            // Clear session data
+            session()->forget(['oauth_state', 'oauth_organization_id']);
+
+            // Check if opened in popup
+            if (session('oauth_popup')) {
+                session()->forget('oauth_popup');
+                return view('oauth-callback', ['status' => ['type' => 'success', 'message' => $message]]);
+            }
+
+            return redirect('/social-accounts')->with('status', [
+                'type' => 'success',
+                'message' => $message
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('TikTok OAuth callback error: ' . $e->getMessage());
+            
+            // Check if opened in popup
+            if (session('oauth_popup')) {
+                session()->forget('oauth_popup');
+                return view('oauth-callback', ['error' => __('Failed to connect TikTok: ') . $e->getMessage()]);
+            }
+
+            return redirect('/social-accounts')->with('status', [
+                'type' => 'error',
+                'message' => __('Failed to connect TikTok: ') . $e->getMessage()
             ]);
         }
     }

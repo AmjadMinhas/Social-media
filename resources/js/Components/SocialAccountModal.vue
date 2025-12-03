@@ -148,3 +148,4 @@ const getPlatformIcon = (platform) => {
     </div>
 </template>
 
+
