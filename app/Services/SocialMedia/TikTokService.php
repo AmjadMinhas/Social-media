@@ -2,6 +2,8 @@
 
 namespace App\Services\SocialMedia;
 
+use App\Models\SocialAccount;
+use App\Models\ScheduledPost;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Exception;
@@ -12,12 +14,39 @@ class TikTokService
     protected $authUrl = 'https://www.tiktok.com/v2/auth/authorize';
 
     /**
-     * Get authorization URL
+     * Generate PKCE code verifier and challenge
      */
-    public function getAuthorizationUrl($state)
+    protected function generatePKCE()
+    {
+        // Generate a random code verifier (43-128 characters)
+        $codeVerifier = bin2hex(random_bytes(32));
+        
+        // Generate code challenge (SHA256 hash, base64url encoded)
+        $codeChallenge = rtrim(strtr(base64_encode(hash('sha256', $codeVerifier, true)), '+/', '-_'), '=');
+        
+        return [
+            'code_verifier' => $codeVerifier,
+            'code_challenge' => $codeChallenge,
+        ];
+    }
+
+    /**
+     * Get authorization URL with PKCE
+     */
+    public function getAuthorizationUrl($state, $codeVerifier = null, $codeChallenge = null)
     {
         $clientKey = config('socialmedia.tiktok.client_key');
         $redirectUri = config('socialmedia.tiktok.redirect_uri');
+        
+        // Generate PKCE if not provided
+        if (!$codeVerifier || !$codeChallenge) {
+            $pkce = $this->generatePKCE();
+            $codeVerifier = $pkce['code_verifier'];
+            $codeChallenge = $pkce['code_challenge'];
+        }
+        
+        // Store code_verifier in session for later use
+        session(['tiktok_code_verifier' => $codeVerifier]);
         
         $scopes = [
             'user.info.basic',
@@ -31,30 +60,46 @@ class TikTokService
             'response_type' => 'code',
             'redirect_uri' => $redirectUri,
             'state' => $state,
+            'code_challenge' => $codeChallenge,
+            'code_challenge_method' => 'S256',
         ];
 
         return $this->authUrl . '?' . http_build_query($params);
     }
 
     /**
-     * Get access token from authorization code
+     * Get access token from authorization code (with PKCE)
      */
-    public function getAccessToken($code)
+    public function getAccessToken($code, $codeVerifier = null)
     {
         try {
+            // Get code_verifier from session if not provided
+            if (!$codeVerifier) {
+                $codeVerifier = session('tiktok_code_verifier');
+            }
+            
+            if (!$codeVerifier) {
+                throw new Exception('Code verifier is required for PKCE flow');
+            }
+            
             $response = Http::asForm()->post("{$this->baseUrl}/v2/oauth/token/", [
                 'client_key' => config('socialmedia.tiktok.client_key'),
                 'client_secret' => config('socialmedia.tiktok.client_secret'),
                 'code' => $code,
                 'grant_type' => 'authorization_code',
                 'redirect_uri' => config('socialmedia.tiktok.redirect_uri'),
+                'code_verifier' => $codeVerifier, // PKCE: include code_verifier
             ]);
 
             if ($response->failed()) {
+                Log::error('TikTok token error response: ' . $response->body());
                 throw new Exception('Failed to get access token: ' . $response->body());
             }
 
             $data = $response->json();
+            
+            // Clear code_verifier from session after successful token exchange
+            session()->forget('tiktok_code_verifier');
             
             return [
                 'access_token' => $data['data']['access_token'] ?? null,
@@ -64,6 +109,8 @@ class TikTokService
             ];
         } catch (Exception $e) {
             Log::error('TikTok OAuth error: ' . $e->getMessage());
+            // Clear code_verifier on error too
+            session()->forget('tiktok_code_verifier');
             throw $e;
         }
     }
@@ -206,13 +253,114 @@ class TikTokService
     }
 
     /**
-     * Publish text post (if supported)
+     * Publish post to TikTok
      */
-    public function publishPost($accessToken, $content)
+    public function publishPost(\App\Models\SocialAccount $account, \App\Models\ScheduledPost $scheduledPost)
     {
-        // TikTok primarily supports video content
-        // Text-only posts are not supported via API
-        throw new Exception('TikTok only supports video posts. Please upload a video.');
+        try {
+            // Check if token is expired
+            if ($account->is_token_expired) {
+                throw new Exception('Access token has expired. Please reconnect your TikTok account.');
+            }
+
+            $accessToken = $account->access_token;
+
+            // TikTok requires video content
+            if (empty($scheduledPost->media) || !is_array($scheduledPost->media) || count($scheduledPost->media) === 0) {
+                throw new Exception('TikTok requires video content. Please upload a video.');
+            }
+
+            $videoUrl = $scheduledPost->media[0];
+            $caption = $scheduledPost->content;
+
+            // Step 1: Initialize video upload
+            $initResponse = Http::withHeaders([
+                'Authorization' => "Bearer {$accessToken}",
+                'Content-Type' => 'application/json',
+            ])->post("{$this->baseUrl}/v2/post/publish/video/init/", [
+                'post_info' => [
+                    'title' => $caption ?: 'Video Post',
+                    'privacy_level' => 'PUBLIC_TO_EVERYONE', // or 'SELF_ONLY' for private
+                    'disable_duet' => false,
+                    'disable_comment' => false,
+                    'disable_stitch' => false,
+                    'video_cover_timestamp_ms' => 1000,
+                ],
+                'source_info' => [
+                    'source' => 'FILE_URL',
+                    'video_url' => $videoUrl,
+                ],
+            ]);
+
+            if ($initResponse->failed()) {
+                throw new Exception('Failed to initialize TikTok upload: ' . $initResponse->body());
+            }
+
+            $initData = $initResponse->json();
+            $publishId = $initData['data']['publish_id'] ?? null;
+
+            if (!$publishId) {
+                throw new Exception('No publish ID returned from TikTok');
+            }
+
+            // Step 2: Poll for upload status (TikTok uploads are asynchronous)
+            // Note: For production, consider using a job queue for status polling
+            $maxAttempts = 30; // 30 attempts with 2 second delay = 60 seconds max
+            $attempt = 0;
+            $status = null;
+
+            while ($attempt < $maxAttempts) {
+                usleep(2000000); // Wait 2 seconds between checks (2,000,000 microseconds)
+                $attempt++;
+
+                $statusResponse = $this->checkUploadStatus($accessToken, $publishId);
+                $status = $statusResponse['status'] ?? null;
+
+                if ($status === 'PUBLISHED') {
+                    // Mark account as used
+                    $account->markAsUsed();
+
+                    return [
+                        'success' => true,
+                        'post_id' => $publishId,
+                        'data' => [
+                            'publish_id' => $publishId,
+                            'status' => $status,
+                        ],
+                    ];
+                } elseif ($status === 'FAILED') {
+                    $failReason = $statusResponse['fail_reason'] ?? 'Unknown error';
+                    throw new Exception('TikTok upload failed: ' . $failReason);
+                }
+
+                // Continue polling if status is PROCESSING or other intermediate states
+            }
+
+            // If we get here, the upload is still processing
+            // Return success but note that it's still processing
+            return [
+                'success' => true,
+                'post_id' => $publishId,
+                'data' => [
+                    'publish_id' => $publishId,
+                    'status' => $status ?? 'PROCESSING',
+                    'message' => 'Video is still being processed. Please check TikTok app for final status.',
+                ],
+            ];
+
+        } catch (Exception $e) {
+            Log::error('TikTok publish error: ' . $e->getMessage(), [
+                'account_id' => $account->id,
+                'post_id' => $scheduledPost->id,
+            ]);
+
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+            ];
+        }
     }
 }
+
+
 

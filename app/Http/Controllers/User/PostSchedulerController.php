@@ -113,29 +113,54 @@ class PostSchedulerController extends BaseController
             'content' => 'required|string',
             'platforms' => 'required|array|min:1',
             'platforms.*' => 'in:facebook,instagram,tiktok,twitter,linkedin',
-            'scheduled_at' => 'required|date|after:now',
+            'publish_type' => 'required|in:now,scheduled,time_range',
+            'scheduled_at' => 'required_if:publish_type,scheduled|nullable|date|after:now',
+            'scheduled_from' => 'required_if:publish_type,time_range|nullable|date|after:now',
+            'scheduled_to' => 'required_if:publish_type,time_range|nullable|date|after:scheduled_from',
             'media' => 'nullable|array',
             'media.*' => 'string'
         ]);
 
         $organizationId = session()->get('current_organization');
 
-        ScheduledPost::create([
+        // Determine scheduled_at based on publish_type
+        $scheduledAt = now();
+        if ($validated['publish_type'] === 'scheduled') {
+            $scheduledAt = $validated['scheduled_at'];
+        } elseif ($validated['publish_type'] === 'time_range') {
+            // For time_range, we'll calculate a random time when processing
+            // For now, set to scheduled_from
+            $scheduledAt = $validated['scheduled_from'];
+        }
+
+        $post = ScheduledPost::create([
             'uuid' => Str::uuid(),
             'organization_id' => $organizationId,
             'user_id' => auth()->id(),
             'title' => $validated['title'],
             'content' => $validated['content'],
             'platforms' => json_encode($validated['platforms']),
-            'scheduled_at' => $validated['scheduled_at'],
+            'publish_type' => $validated['publish_type'],
+            'scheduled_at' => $scheduledAt,
+            'scheduled_from' => $validated['scheduled_from'] ?? null,
+            'scheduled_to' => $validated['scheduled_to'] ?? null,
             'media' => isset($validated['media']) ? json_encode($validated['media']) : null,
-            'status' => 'scheduled'
+            'status' => $validated['publish_type'] === 'now' ? 'scheduled' : 'scheduled'
         ]);
+
+        // If publish_type is 'now', dispatch immediately
+        if ($validated['publish_type'] === 'now') {
+            \App\Jobs\PublishScheduledPostJob::dispatch($post);
+        }
+
+        $message = $validated['publish_type'] === 'now' 
+            ? __('Post published successfully!')
+            : __('Post scheduled successfully!');
 
         return Redirect::route('post-scheduler')->with(
             'status', [
                 'type' => 'success',
-                'message' => __('Post scheduled successfully!')
+                'message' => $message
             ]
         );
     }
@@ -147,7 +172,10 @@ class PostSchedulerController extends BaseController
             'content' => 'required|string',
             'platforms' => 'required|array|min:1',
             'platforms.*' => 'in:facebook,instagram,tiktok,twitter,linkedin',
-            'scheduled_at' => 'required|date',
+            'publish_type' => 'required|in:now,scheduled,time_range',
+            'scheduled_at' => 'required_if:publish_type,scheduled|nullable|date',
+            'scheduled_from' => 'required_if:publish_type,time_range|nullable|date',
+            'scheduled_to' => 'required_if:publish_type,time_range|nullable|date|after:scheduled_from',
             'media' => 'nullable|array',
             'status' => 'nullable|in:scheduled,published,failed,cancelled'
         ]);
@@ -158,14 +186,32 @@ class PostSchedulerController extends BaseController
             ->where('organization_id', $organizationId)
             ->firstOrFail();
 
+        // Determine scheduled_at based on publish_type
+        $scheduledAt = $post->scheduled_at;
+        if ($validated['publish_type'] === 'scheduled' && isset($validated['scheduled_at'])) {
+            $scheduledAt = $validated['scheduled_at'];
+        } elseif ($validated['publish_type'] === 'time_range' && isset($validated['scheduled_from'])) {
+            $scheduledAt = $validated['scheduled_from'];
+        } elseif ($validated['publish_type'] === 'now') {
+            $scheduledAt = now();
+        }
+
         $post->update([
             'title' => $validated['title'],
             'content' => $validated['content'],
             'platforms' => json_encode($validated['platforms']),
-            'scheduled_at' => $validated['scheduled_at'],
+            'publish_type' => $validated['publish_type'],
+            'scheduled_at' => $scheduledAt,
+            'scheduled_from' => $validated['scheduled_from'] ?? null,
+            'scheduled_to' => $validated['scheduled_to'] ?? null,
             'media' => isset($validated['media']) ? json_encode($validated['media']) : null,
             'status' => $validated['status'] ?? $post->status
         ]);
+
+        // If publish_type is 'now' and status is still scheduled, dispatch immediately
+        if ($validated['publish_type'] === 'now' && $post->status === 'scheduled') {
+            \App\Jobs\PublishScheduledPostJob::dispatch($post);
+        }
 
         return Redirect::route('post-scheduler')->with(
             'status', [

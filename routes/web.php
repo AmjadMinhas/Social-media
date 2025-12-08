@@ -67,6 +67,10 @@ Route::get('/logout', [App\Http\Controllers\AuthController::class, 'logout'])->n
 Route::match(['get', 'post'], '/webhook/whatsapp/{identifier?}', [App\Http\Controllers\WebhookController::class, 'handle']);
 Route::match(['get', 'post'], '/webhook/waba', [App\Http\Controllers\WebhookController::class, 'whatsappWebhook']);
 Route::match(['get', 'post'], '/webhook/{processor}', [App\Http\Controllers\WebhookController::class, 'processWebhook']);
+
+// Social Media Webhooks
+Route::match(['get', 'post'], '/webhook/social/facebook/{organizationId}', [App\Http\Controllers\SocialMediaWebhookController::class, 'handleFacebookWebhook']);
+Route::match(['get', 'post'], '/webhook/social/twitter/{organizationId}', [App\Http\Controllers\SocialMediaWebhookController::class, 'handleTwitterWebhook']);
 Route::match(['get', 'post'], '/payment/{processor}', [App\Http\Controllers\PaymentController::class, 'processPayment']);
 
 Route::get('/campaign-send', [App\Http\Controllers\FrontendController::class, 'sendCampaign']);
@@ -146,6 +150,13 @@ Route::middleware(['auth:user'])->group(function () {
                 Route::post('/chat/{uuid}/send/template', [App\Http\Controllers\User\ChatController::class, 'sendTemplateMessage']);
                 Route::get('/chat/test/{id}', [App\Http\Controllers\User\ChatController::class, 'sendAutoReply']);
                 Route::post('/chats/update-sort-direction', [App\Http\Controllers\User\ChatController::class, 'updateChatSortDirection']);
+
+                // Unified Social Inbox Routes
+                Route::get('/social-inbox', [App\Http\Controllers\User\UnifiedSocialInboxController::class, 'index']);
+                Route::get('/social-inbox/{contactUuid}', [App\Http\Controllers\User\UnifiedSocialInboxController::class, 'index']);
+                Route::post('/social-inbox/send', [App\Http\Controllers\User\UnifiedSocialInboxController::class, 'sendMessage']);
+                Route::post('/social-inbox/sync', [App\Http\Controllers\User\UnifiedSocialInboxController::class, 'syncMessages']);
+                Route::get('/social-inbox/stats', [App\Http\Controllers\User\UnifiedSocialInboxController::class, 'getStats']);
 
                 Route::get('/tickets/{status}', [App\Http\Controllers\User\ChatTicketController::class, 'index']);
                 Route::put('/tickets/{uuid}/update', [App\Http\Controllers\User\ChatTicketController::class, 'update']);

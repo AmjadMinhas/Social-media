@@ -32,9 +32,7 @@ class ProcessScheduledPosts extends Command
         $this->info('Checking for scheduled posts...');
 
         // Get posts that are scheduled and ready to be published
-        $posts = ScheduledPost::where('status', 'scheduled')
-            ->where('scheduled_at', '<=', Carbon::now())
-            ->get();
+        $posts = ScheduledPost::readyToPublish()->get();
 
         if ($posts->isEmpty()) {
             $this->info('No posts ready to be published.');
@@ -45,6 +43,13 @@ class ProcessScheduledPosts extends Command
 
         foreach ($posts as $post) {
             try {
+                // For time_range posts, calculate random scheduled time
+                if ($post->publish_type === 'time_range' && !$post->scheduled_at) {
+                    $randomTime = $post->calculateRandomScheduledTime();
+                    $post->update(['scheduled_at' => $randomTime]);
+                    $this->info("Calculated random time for post {$post->id}: {$randomTime}");
+                }
+
                 $this->info("Dispatching job for post ID: {$post->id} (UUID: {$post->uuid})");
                 
                 // Dispatch job to publish the post
@@ -55,6 +60,7 @@ class ProcessScheduledPosts extends Command
                 Log::info('Scheduled post job dispatched', [
                     'post_id' => $post->id,
                     'uuid' => $post->uuid,
+                    'publish_type' => $post->publish_type,
                     'scheduled_at' => $post->scheduled_at,
                 ]);
 
@@ -73,5 +79,7 @@ class ProcessScheduledPosts extends Command
         return 0;
     }
 }
+
+
 
 

@@ -698,8 +698,9 @@ class SocialAccountController extends Controller
                 throw new \Exception('User denied authorization: ' . $request->error_description);
             }
 
-            // Get access token
-            $tokenData = $this->tiktokService->getAccessToken($request->code);
+            // Get access token (code_verifier will be retrieved from session)
+            $codeVerifier = session('tiktok_code_verifier');
+            $tokenData = $this->tiktokService->getAccessToken($request->code, $codeVerifier);
             $accessToken = $tokenData['access_token'];
             $refreshToken = $tokenData['refresh_token'] ?? null;
             $expiresIn = $tokenData['expires_in'] ?? 86400;

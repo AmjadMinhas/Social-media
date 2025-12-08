@@ -27,6 +27,11 @@ class Kernel extends ConsoleKernel
             ->everyMinute()
             ->withoutOverlapping();
 
+        // Sync social media messages every 5 minutes
+        $schedule->command('social:sync-messages')
+            ->everyFiveMinutes()
+            ->withoutOverlapping();
+
         /*$schedule->command('queue:work --queue=campaign-messages,campaign-logs --stop-when-empty')
             ->everyMinute()
             ->withoutOverlapping();*/

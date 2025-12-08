@@ -19,6 +19,9 @@ class ScheduledPost extends Model
         'platforms',
         'media',
         'scheduled_at',
+        'publish_type',
+        'scheduled_from',
+        'scheduled_to',
         'published_at',
         'status',
         'error_message',
@@ -31,6 +34,8 @@ class ScheduledPost extends Model
         'media' => 'array',
         'platform_post_ids' => 'array',
         'scheduled_at' => 'datetime',
+        'scheduled_from' => 'datetime',
+        'scheduled_to' => 'datetime',
         'published_at' => 'datetime',
     ];
 
@@ -137,7 +142,36 @@ class ScheduledPost extends Model
     public function scopeReadyToPublish($query)
     {
         return $query->where('status', 'scheduled')
-            ->where('scheduled_at', '<=', now());
+            ->where(function ($q) {
+                $q->where('publish_type', 'now')
+                  ->orWhere(function ($subQ) {
+                      $subQ->where('publish_type', 'scheduled')
+                           ->where('scheduled_at', '<=', now());
+                  })
+                  ->orWhere(function ($subQ) {
+                      $subQ->where('publish_type', 'time_range')
+                           ->where('scheduled_from', '<=', now())
+                           ->where('scheduled_to', '>=', now());
+                  });
+            });
+    }
+
+    /**
+     * Calculate random scheduled time within time range
+     */
+    public function calculateRandomScheduledTime()
+    {
+        if ($this->publish_type !== 'time_range' || !$this->scheduled_from || !$this->scheduled_to) {
+            return $this->scheduled_at;
+        }
+
+        $from = $this->scheduled_from->timestamp;
+        $to = $this->scheduled_to->timestamp;
+        
+        // Generate random timestamp within range
+        $randomTimestamp = rand($from, $to);
+        
+        return \Carbon\Carbon::createFromTimestamp($randomTimestamp);
     }
 }
 

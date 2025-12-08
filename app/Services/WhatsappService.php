@@ -30,6 +30,7 @@ class WhatsappService
     private $phoneNumberId;
     private $organizationId;
     private $wabaId;
+    private $requestQueue;
 
     public function __construct($accessToken, $apiVersion, $appId, $phoneNumberId, $wabaId, $organizationId)
     {
@@ -39,6 +40,9 @@ class WhatsappService
         $this->phoneNumberId = $phoneNumberId;
         $this->wabaId = $wabaId;
         $this->organizationId = $organizationId;
+        
+        // Initialize request queue for concurrent business and API usage
+        $this->requestQueue = new \App\Services\WhatsAppRequestQueue($organizationId, $phoneNumberId);
 
         Config::set('broadcasting.connections.pusher', [
             'driver' => 'pusher',
@@ -114,7 +118,10 @@ class WhatsappService
             }
         }
 
-        $responseObject = $this->sendHttpRequest('POST', $url, $requestData, $headers);
+        // Use request queue to handle concurrent business and API usage
+        $responseObject = $this->requestQueue->queueRequest(function() use ($url, $requestData, $headers) {
+            return $this->sendHttpRequest('POST', $url, $requestData, $headers);
+        }, 'message');
 
         if($responseObject->success === true){
             $response['text']['body'] = clean($messageContent);
@@ -179,7 +186,10 @@ class WhatsappService
 
         //\Log::info('WhatsApp API Request: ' . json_encode($requestData));
 
-        $responseObject = $this->sendHttpRequest('POST', $url, $requestData, $headers);
+        // Use request queue to handle concurrent business and API usage
+        $responseObject = $this->requestQueue->queueRequest(function() use ($url, $requestData, $headers) {
+            return $this->sendHttpRequest('POST', $url, $requestData, $headers);
+        }, 'template');
 
         if($responseObject->success === true){
             if($campaignId != NULL){
@@ -437,7 +447,10 @@ class WhatsappService
             $requestData[$mediaType]['caption'] = $caption;
         }
 
-        $responseObject = $this->sendHttpRequest('POST', $url, $requestData, $headers);
+        // Use request queue to handle concurrent business and API usage
+        $responseObject = $this->requestQueue->queueRequest(function() use ($url, $requestData, $headers) {
+            return $this->sendHttpRequest('POST', $url, $requestData, $headers);
+        }, 'media');
 
         //Log::info(json_encode($responseObject));
 

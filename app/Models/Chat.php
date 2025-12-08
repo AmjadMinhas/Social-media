@@ -14,6 +14,10 @@ class Chat extends Model {
     protected $guarded = [];
     public $timestamps = false;
 
+    protected $casts = [
+        'platform_data' => 'array',
+    ];
+
     protected static function boot()
     {
         parent::boot();
