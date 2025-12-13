@@ -13,7 +13,7 @@
                             </div>
                             <div class="ml-auto">
                                 <EmbeddedSignupBtn v-if="embeddedSignupActive == 1" :appId="props.appId" :configId="props.configId" :graphAPIVersion="props.graphAPIVersion"/>
-                                <button v-else  @click="openModal()" class="bg-primary text-white p-2 rounded-lg text-sm mt-5 flex px-3 w-fit">
+                                <button v-else @click="openModal" type="button" class="bg-primary text-white p-2 rounded-lg text-sm mt-5 flex px-3 w-fit hover:shadow-md transition-shadow cursor-pointer">
                                     {{ $t('Setup whatsapp') }}
                                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><g fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"><g opacity=".2"><path d="M12.206 5.848a1.5 1.5 0 0 1 2.113.192l3.333 4a1.5 1.5 0 1 1-2.304 1.92l-3.334-4a1.5 1.5 0 0 1 .192-2.112Z"/><path d="M12.206 16.152a1.5 1.5 0 0 1-.192-2.112l3.334-4a1.5 1.5 0 0 1 2.304 1.92l-3.333 4a1.5 1.5 0 0 1-2.113.192Z"/><path d="M16 11a1.5 1.5 0 0 1-1.5 1.5h-8a1.5 1.5 0 0 1 0-3h8A1.5 1.5 0 0 1 16 11Z"/></g><path d="M11.347 5.616a.5.5 0 0 1 .704.064l3.333 4a.5.5 0 0 1-.768.64l-3.333-4a.5.5 0 0 1 .064-.704Z"/><path d="M11.347 14.384a.5.5 0 0 1-.064-.704l3.333-4a.5.5 0 0 1 .768.64l-3.333 4a.5.5 0 0 1-.704.064Z"/><path d="M15.5 10a.5.5 0 0 1-.5.5H5a.5.5 0 0 1 0-1h20a.5.5 0 0 1 .5.5Z"/></g></svg>
                                 </button>
@@ -63,6 +63,26 @@
                             <div>
                                 <div>{{ $t('Account status') }}</div>
                                 <div class="bg-slate-50 py-1 px-2 rounded-md w-[fit-content] text-xs">{{ settings.whatsapp?.account_review_status }}</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Concurrent Mode & Multi-Device Status -->
+                        <div v-if="settings?.whatsapp" class="grid grid-cols-2 items-center px-4 gap-x-4 py-3 border-t">
+                            <div>
+                                <div class="text-xs text-slate-600 mb-1">{{ $t('Concurrent Mode') }}</div>
+                                <div class="bg-slate-50 py-1 px-2 rounded-md w-[fit-content] text-xs">
+                                    <span v-if="settings.whatsapp?.concurrent_mode_enabled" class="text-green-600">● {{ $t('Enabled') }}</span>
+                                    <span v-else class="text-gray-500">○ {{ $t('Disabled') }}</span>
+                                </div>
+                                <p class="text-xs text-gray-500 mt-1">{{ $t('Business App + API simultaneously') }}</p>
+                            </div>
+                            <div>
+                                <div class="text-xs text-slate-600 mb-1">{{ $t('Multi-Device Support') }}</div>
+                                <div class="bg-slate-50 py-1 px-2 rounded-md w-[fit-content] text-xs">
+                                    <span v-if="settings.whatsapp?.multi_device_enabled !== false" class="text-green-600">● {{ $t('Enabled') }}</span>
+                                    <span v-else class="text-gray-500">○ {{ $t('Disabled') }}</span>
+                                </div>
+                                <p class="text-xs text-gray-500 mt-1">{{ $t('Multiple devices logged in') }}</p>
                             </div>
                         </div>
                     </div>
@@ -197,7 +217,7 @@
             </div>
         </div>
 
-        <Modal :label="$t('Whatsapp API config')" :isOpen=isOpenFormModal>
+        <Modal :label="$t('Whatsapp API config')" :isOpen="isOpenFormModal" :closeBtn="true" @close="isOpenFormModal = false">
             <div class="mt-5 grid grid-cols-1 gap-x-6 gap-y-4">
                 <form @submit.prevent="submitForm()" class="grid gap-x-6 gap-y-4 sm:grid-cols-6">
 
@@ -205,6 +225,39 @@
                     <FormInput v-model="form.access_token" :error="form.errors.access_token" :name="$t('Access token')" :type="'text'" :class="'sm:col-span-6'"/>
                     <FormInput v-model="form.phone_number_id" :error="form.errors.phone_number_id" :name="$t('Phone number ID')" :type="'text'" :class="'sm:col-span-6'"/>
                     <FormInput v-model="form.waba_id" :error="form.errors.waba_id" :name="$t('Whatsapp business account ID')" :type="'text'" :class="'sm:col-span-6'"/>
+                    <FormInput v-model="form.device_name" :error="form.errors.device_name" :name="$t('Device Name')" :type="'text'" :class="'sm:col-span-6'"/>
+                    
+                    <div class="sm:col-span-6">
+                        <div class="flex items-center mb-4">
+                            <input 
+                                id="enable_concurrent_mode" 
+                                type="checkbox" 
+                                v-model="form.enable_concurrent_mode"
+                                class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                            />
+                            <label for="enable_concurrent_mode" class="ml-2 block text-sm text-gray-900">
+                                {{ $t('Enable Concurrent Mode (Business App + API)') }}
+                            </label>
+                        </div>
+                        <p class="text-xs text-gray-500 ml-6 mb-4">
+                            {{ $t('Allow using WhatsApp Business App and API simultaneously on the same number') }}
+                        </p>
+                        
+                        <div class="flex items-center">
+                            <input 
+                                id="enable_multi_device" 
+                                type="checkbox" 
+                                v-model="form.enable_multi_device"
+                                class="h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded"
+                            />
+                            <label for="enable_multi_device" class="ml-2 block text-sm text-gray-900">
+                                {{ $t('Enable Multi-Device Support') }}
+                            </label>
+                        </div>
+                        <p class="text-xs text-gray-500 ml-6">
+                            {{ $t('Allow accounts to be logged into multiple devices') }}
+                        </p>
+                    </div>
 
                     <div class="mt-4 flex">
                         <button type="button" @click.self="isOpenFormModal = false" class="inline-flex justify-center rounded-md border border-transparent bg-slate-50 px-4 py-2 text-sm text-slate-500 hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 mr-4">{{ $t('Cancel') }}</button>
@@ -242,7 +295,7 @@
 </template>
 <script setup>
     import SettingLayout from "./Layout.vue";
-    import { ref } from 'vue';
+    import { ref, nextTick } from 'vue';
     import EmbeddedSignupBtn from '@/Components/EmbeddedSignupBtn.vue';
     import FormModal from '@/Components/FormModal.vue';
     import FormImageLogo from '@/Components/FormImageLogo.vue';
@@ -266,6 +319,9 @@
         access_token: settings.value && settings.value.whatsapp ? settings.value.whatsapp.access_token : null,
         phone_number_id: settings.value && settings.value.whatsapp ? settings.value.whatsapp.phone_number_id : null,
         waba_id: settings.value && settings.value.whatsapp ? settings.value.whatsapp.waba_id : null,
+        device_name: 'Primary Device',
+        enable_concurrent_mode: settings.value && settings.value.whatsapp ? (settings.value.whatsapp.concurrent_mode_enabled ?? false) : false,
+        enable_multi_device: settings.value && settings.value.whatsapp ? (settings.value.whatsapp.multi_device_enabled ?? true) : true,
     });
 
     const form2 = useForm({

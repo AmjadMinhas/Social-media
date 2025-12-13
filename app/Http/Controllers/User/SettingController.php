@@ -14,6 +14,7 @@ use App\Models\Setting;
 use App\Models\Template;
 use App\Services\ContactFieldService;
 use App\Services\WhatsappService;
+use App\Services\WhatsAppDeviceSessionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\URL;
 use Inertia\Inertia;
@@ -85,7 +86,10 @@ class SettingController extends BaseController
             $request->app_id,
             $request->phone_number_id,
             $request->waba_id,
-            $setWebhookUrl
+            $setWebhookUrl,
+            $request->enable_concurrent_mode ?? false,
+            $request->enable_multi_device ?? false,
+            $request->device_name ?? 'Primary Device'
         );
     }
 
@@ -328,7 +332,7 @@ class SettingController extends BaseController
         );
     }
 
-    private function saveWhatsappSettings($accessToken, $appId, $phoneNumberId, $wabaId, $subscribeToWebhook = false) {
+    private function saveWhatsappSettings($accessToken, $appId, $phoneNumberId, $wabaId, $subscribeToWebhook = false, $enableConcurrentMode = false, $enableMultiDevice = false, $deviceName = 'Primary Device') {
         $organizationId = session()->get('current_organization');
         $apiVersion = config('graph.api_version');
     
@@ -406,16 +410,57 @@ class SettingController extends BaseController
         $metadataArray['whatsapp']['business_profile']['industry'] = $businessProfileResponse->data->vertical ?? NULL;
         $metadataArray['whatsapp']['business_profile']['email'] = $businessProfileResponse->data->email ?? NULL;
 
+        // Register device session for multi-device support
+        $deviceSessionService = new WhatsAppDeviceSessionService($organizationId);
+        
+        // Check if this is a new connection or update
+        $existingDevices = $deviceSessionService->getDeviceSessions();
+        $isNewConnection = empty($existingDevices);
+        
+        // Register/update device session
+        $deviceSessionService->registerDeviceSession([
+            'access_token' => $accessToken,
+            'phone_number_id' => $phoneNumberResponse->data->id,
+            'app_id' => $appId,
+            'waba_id' => $wabaId,
+            'device_name' => $deviceName,
+            'device_type' => 'api',
+            'is_primary' => $isNewConnection,
+            'enable_business_app' => $enableConcurrentMode,
+            'enable_api' => true,
+        ]);
+
+        // Enable concurrent mode if requested
+        if ($enableConcurrentMode) {
+            $deviceSessionService->enableConcurrentMode();
+            $metadataArray['whatsapp']['concurrent_mode_enabled'] = true;
+            $metadataArray['whatsapp']['business_app_enabled'] = true;
+            $metadataArray['whatsapp']['api_enabled'] = true;
+        }
+
+        // Enable multi-device support
+        if ($enableMultiDevice) {
+            $metadataArray['whatsapp']['multi_device_enabled'] = true;
+        }
+
         $updatedMetadataJson = json_encode($metadataArray);
         $organizationConfig->metadata = $updatedMetadataJson;
 
         if($organizationConfig->save()){
             $whatsappService->syncTemplates($accessToken, $wabaId);
 
+            $message = __('Whatsapp settings updated successfully');
+            if ($enableConcurrentMode) {
+                $message .= ' ' . __('Concurrent mode (Business App + API) enabled.');
+            }
+            if ($enableMultiDevice) {
+                $message .= ' ' . __('Multi-device support enabled.');
+            }
+
             return back()->with(
                 'status', [
                     'type' => 'success', 
-                    'message' => __('Whatsapp settings updated successfully')
+                    'message' => $message
                 ]
             );
         } else {
@@ -426,6 +471,127 @@ class SettingController extends BaseController
                 ]
             );
         }
+    }
+
+    /**
+     * Get WhatsApp device sessions
+     */
+    public function getWhatsAppDeviceSessions(Request $request)
+    {
+        $organizationId = session()->get('current_organization');
+        $deviceSessionService = new WhatsAppDeviceSessionService($organizationId);
+        
+        $devices = $deviceSessionService->getDeviceSessions();
+        $concurrentModeEnabled = $deviceSessionService->isConcurrentModeEnabled();
+        
+        return response()->json([
+            'devices' => $devices,
+            'concurrent_mode_enabled' => $concurrentModeEnabled,
+            'multi_device_enabled' => true, // Always enabled with this implementation
+        ]);
+    }
+
+    /**
+     * Add a new device session
+     */
+    public function addWhatsAppDeviceSession(Request $request)
+    {
+        if ($response = $this->abortIfDemo()) {
+            return $response;
+        }
+
+        $organizationId = session()->get('current_organization');
+        $deviceSessionService = new WhatsAppDeviceSessionService($organizationId);
+
+        $validated = $request->validate([
+            'access_token' => 'required|string',
+            'phone_number_id' => 'required|string',
+            'app_id' => 'nullable|string',
+            'waba_id' => 'nullable|string',
+            'device_name' => 'required|string|max:255',
+            'device_type' => 'nullable|in:api,business_app',
+            'enable_business_app' => 'nullable|boolean',
+            'enable_api' => 'nullable|boolean',
+        ]);
+
+        $result = $deviceSessionService->registerDeviceSession($validated);
+
+        if ($result) {
+            return back()->with(
+                'status', [
+                    'type' => 'success', 
+                    'message' => __('Device session added successfully')
+                ]
+            );
+        }
+
+        return back()->with(
+            'status', [
+                'type' => 'error', 
+                'message' => __('Failed to add device session')
+            ]
+        );
+    }
+
+    /**
+     * Remove a device session
+     */
+    public function removeWhatsAppDeviceSession(Request $request, $deviceId)
+    {
+        if ($response = $this->abortIfDemo()) {
+            return $response;
+        }
+
+        $organizationId = session()->get('current_organization');
+        $deviceSessionService = new WhatsAppDeviceSessionService($organizationId);
+
+        $result = $deviceSessionService->removeDeviceSession($deviceId);
+
+        if ($result) {
+            return back()->with(
+                'status', [
+                    'type' => 'success', 
+                    'message' => __('Device session removed successfully')
+                ]
+            );
+        }
+
+        return back()->with(
+            'status', [
+                'type' => 'error', 
+                'message' => __('Failed to remove device session')
+            ]
+        );
+    }
+
+    /**
+     * Toggle concurrent mode
+     */
+    public function toggleConcurrentMode(Request $request)
+    {
+        if ($response = $this->abortIfDemo()) {
+            return $response;
+        }
+
+        $organizationId = session()->get('current_organization');
+        $deviceSessionService = new WhatsAppDeviceSessionService($organizationId);
+
+        $enabled = $request->input('enabled', false);
+
+        if ($enabled) {
+            $deviceSessionService->enableConcurrentMode();
+            $message = __('Concurrent mode enabled. Business app and API can now be used simultaneously.');
+        } else {
+            $deviceSessionService->disableConcurrentMode();
+            $message = __('Concurrent mode disabled.');
+        }
+
+        return back()->with(
+            'status', [
+                'type' => 'success', 
+                'message' => $message
+            ]
+        );
     }
 
     protected function abortIfDemo(){

@@ -664,16 +664,22 @@ class ApiController extends Controller
 
     private function initializeWhatsappService($organizationId)
     {
-        $config = Organization::where('id', $organizationId)->first()->metadata;
-        $config = $config ? json_decode($config, true) : [];
+        // Try to get primary instance using new device session method
+        $this->whatsappService = WhatsappService::primaryInstance($organizationId);
+        
+        // Fallback to legacy method if primary instance not available
+        if (!$this->whatsappService) {
+            $config = Organization::where('id', $organizationId)->first()->metadata;
+            $config = $config ? json_decode($config, true) : [];
 
-        $accessToken = $config['whatsapp']['access_token'] ?? null;
-        $apiVersion = config('graph.api_version');
-        $appId = $config['whatsapp']['app_id'] ?? null;
-        $phoneNumberId = $config['whatsapp']['phone_number_id'] ?? null;
-        $wabaId = $config['whatsapp']['waba_id'] ?? null;
+            $accessToken = $config['whatsapp']['access_token'] ?? null;
+            $apiVersion = config('graph.api_version');
+            $appId = $config['whatsapp']['app_id'] ?? null;
+            $phoneNumberId = $config['whatsapp']['phone_number_id'] ?? null;
+            $wabaId = $config['whatsapp']['waba_id'] ?? null;
 
-        $this->whatsappService = new WhatsappService($accessToken, $apiVersion, $appId, $phoneNumberId, $wabaId, $organizationId);
+            $this->whatsappService = new WhatsappService($accessToken, $apiVersion, $appId, $phoneNumberId, $wabaId, $organizationId);
+        }
     }
 
     /**

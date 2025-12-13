@@ -225,6 +225,10 @@ Route::middleware(['auth:user'])->group(function () {
                     Route::post('/settings/whatsapp', [App\Http\Controllers\User\SettingController::class, 'storeWhatsappSettings']);
                     Route::post('/settings/whatsapp/business-profile', [App\Http\Controllers\User\SettingController::class, 'whatsappBusinessProfileUpdate']);
                     Route::delete('/settings/whatsapp/business-profile', [App\Http\Controllers\User\SettingController::class, 'deleteWhatsappIntegration']);
+                    Route::get('/settings/whatsapp/devices', [App\Http\Controllers\User\SettingController::class, 'getWhatsAppDeviceSessions']);
+                    Route::post('/settings/whatsapp/devices', [App\Http\Controllers\User\SettingController::class, 'addWhatsAppDeviceSession']);
+                    Route::delete('/settings/whatsapp/devices/{deviceId}', [App\Http\Controllers\User\SettingController::class, 'removeWhatsAppDeviceSession']);
+                    Route::post('/settings/whatsapp/concurrent-mode/toggle', [App\Http\Controllers\User\SettingController::class, 'toggleConcurrentMode']);
                     Route::match(['get', 'post'], '/settings/contacts', [App\Http\Controllers\User\SettingController::class, 'contacts']);
                     Route::match(['get', 'post'], '/settings/tickets', [App\Http\Controllers\User\SettingController::class, 'tickets']);
                     Route::match(['get', 'post'], '/settings/automation', [App\Http\Controllers\User\SettingController::class, 'automation']);

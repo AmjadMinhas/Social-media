@@ -1,7 +1,4 @@
 <script setup>
-    import { ref } from 'vue';
-    import { TransitionRoot, TransitionChild, Dialog, DialogPanel, DialogTitle } from '@headlessui/vue';
-
     const props = defineProps({
         label: String,
         isOpen: Boolean,
@@ -19,52 +16,37 @@
     }
 </script>
 <template>
-    <TransitionRoot appear :show="props.isOpen" as="template">
-        <Dialog as="div" class="relative z-10">
-            <TransitionChild
-                as="template"
-                enter="duration-300 ease-out"
-                enter-from="opacity-0"
-                enter-to="opacity-100"
-                leave="duration-200 ease-in"
-                leave-from="opacity-100"
-                leave-to="opacity-0"
-            >
-                <div class="fixed inset-0 bg-black bg-opacity-25" />
-            </TransitionChild>
+    <div v-if="props.isOpen" class="fixed inset-0 z-[9999] overflow-y-auto" @click.self="closeModal">
+        <div class="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+            <!-- Background overlay -->
+            <div class="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" @click="closeModal" style="z-index: -1;"></div>
 
-            <div class="fixed inset-0 overflow-y-auto">
-                <div
-                class="flex min-h-full items-center justify-center p-4 text-center"
-                >
-                <TransitionChild
-                    as="template"
-                    enter="duration-300 ease-out"
-                    enter-from="opacity-0 scale-95"
-                    enter-to="opacity-100 scale-100"
-                    leave="duration-200 ease-in"
-                    leave-from="opacity-100 scale-100"
-                    leave-to="opacity-0 scale-95"
-                >
-                    <DialogPanel
-                    class="w-full max-w-md transform overflow-hidden rounded-2xl bg-white text-left align-middle shadow-xl transition-all"
-                    >
-                    <div v-if="props.showHeader != false" class="flex justify-between items-center bg-gray-50 px-4 py-3">
-                        <DialogTitle as="h3" class="text-lg font-medium leading-6 text-gray-900">
+            <!-- Modal panel -->
+            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full relative z-10" @click.stop>
+                <!-- Header -->
+                <div v-if="props.showHeader != false" class="bg-white px-6 pt-6 pb-4">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-lg font-medium leading-6 text-gray-900">
                             {{ props.label }}
-                        </DialogTitle>
-
-                        <span @click="closeModal" v-if="closeBtn === true" class="bg-slate-100 rounded-full p-1 hover:shadow cursor-pointer">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="none" stroke="black" stroke-linecap="round" stroke-linejoin="round" d="M17 7L7 17M7 7l10 10"/></svg>
-                        </span>
+                        </h3>
+                        <button 
+                            v-if="closeBtn === true" 
+                            @click="closeModal" 
+                            type="button"
+                            class="text-gray-400 hover:text-gray-500 focus:outline-none"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
                     </div>
-                    <div class="px-4 pb-4">
-                        <slot />
-                    </div>
-                    </DialogPanel>
-                </TransitionChild>
+                </div>
+                <!-- Body -->
+                <div class="bg-white px-6 pb-4">
+                    <slot />
                 </div>
             </div>
-        </Dialog>
-    </TransitionRoot>
+        </div>
+    </div>
 </template>

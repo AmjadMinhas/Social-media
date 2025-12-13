@@ -12,6 +12,7 @@ use App\Models\Contact;
 use App\Models\Organization;
 use App\Models\Setting;
 use App\Models\Template;
+use App\Services\WhatsAppDeviceSessionService;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\GuzzleException;
@@ -32,7 +33,7 @@ class WhatsappService
     private $wabaId;
     private $requestQueue;
 
-    public function __construct($accessToken, $apiVersion, $appId, $phoneNumberId, $wabaId, $organizationId)
+    public function __construct($accessToken, $apiVersion, $appId, $phoneNumberId, $wabaId, $organizationId, $deviceId = null)
     {
         $this->accessToken = $accessToken;
         $this->apiVersion = $apiVersion;
@@ -41,8 +42,19 @@ class WhatsappService
         $this->wabaId = $wabaId;
         $this->organizationId = $organizationId;
         
+        // If device ID provided, use it; otherwise use phone number ID
+        $queueIdentifier = $deviceId ?? $phoneNumberId;
+        
         // Initialize request queue for concurrent business and API usage
-        $this->requestQueue = new \App\Services\WhatsAppRequestQueue($organizationId, $phoneNumberId);
+        $this->requestQueue = new \App\Services\WhatsAppRequestQueue($organizationId, $queueIdentifier);
+        
+        // Update device session last used timestamp if device ID provided
+        if ($deviceId) {
+            $deviceSessionService = new WhatsAppDeviceSessionService($organizationId);
+            $deviceSessionService->updateDeviceSession($deviceId, [
+                'last_used_at' => now()->toISOString()
+            ]);
+        }
 
         Config::set('broadcasting.connections.pusher', [
             'driver' => 'pusher',
@@ -53,6 +65,70 @@ class WhatsappService
                 'cluster' => Setting::where('key', 'pusher_app_cluster')->first()->value,
             ],
         ]);
+    }
+    
+    /**
+     * Create WhatsappService instance from device session
+     * 
+     * @param string $deviceId Device session ID
+     * @param int $organizationId Organization ID
+     * @return WhatsappService|null
+     */
+    public static function fromDeviceSession($deviceId, $organizationId)
+    {
+        $deviceSessionService = new WhatsAppDeviceSessionService($organizationId);
+        $device = $deviceSessionService->getDeviceSession($deviceId);
+        
+        if (!$device || !isset($device['is_active']) || !$device['is_active']) {
+            return null;
+        }
+        
+        $apiVersion = config('graph.api_version');
+        
+        return new self(
+            $device['access_token'],
+            $apiVersion,
+            $device['app_id'] ?? null,
+            $device['phone_number_id'],
+            $device['waba_id'] ?? null,
+            $organizationId,
+            $deviceId
+        );
+    }
+    
+    /**
+     * Get primary WhatsappService instance for organization
+     * 
+     * @param int $organizationId Organization ID
+     * @return WhatsappService|null
+     */
+    public static function primaryInstance($organizationId)
+    {
+        $deviceSessionService = new WhatsAppDeviceSessionService($organizationId);
+        $primaryDevice = $deviceSessionService->getPrimaryDeviceSession();
+        
+        if (!$primaryDevice) {
+            // Fallback to legacy metadata structure
+            $config = Organization::findOrFail($organizationId)->metadata;
+            $config = $config ? json_decode($config, true) : [];
+            
+            if (!isset($config['whatsapp'])) {
+                return null;
+            }
+            
+            $apiVersion = config('graph.api_version');
+            
+            return new self(
+                $config['whatsapp']['access_token'] ?? null,
+                $apiVersion,
+                $config['whatsapp']['app_id'] ?? null,
+                $config['whatsapp']['phone_number_id'] ?? null,
+                $config['whatsapp']['waba_id'] ?? null,
+                $organizationId
+            );
+        }
+        
+        return self::fromDeviceSession($primaryDevice['device_id'], $organizationId);
     }
 
     /**

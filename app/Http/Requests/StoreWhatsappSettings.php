@@ -26,6 +26,9 @@ class StoreWhatsappSettings extends FormRequest
             'app_id' => 'required',
             'phone_number_id' => 'required',
             'waba_id' => 'required',
+            'enable_concurrent_mode' => 'nullable|boolean',
+            'enable_multi_device' => 'nullable|boolean',
+            'device_name' => 'nullable|string|max:255',
         ];
 
         return $rules;
