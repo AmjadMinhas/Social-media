@@ -24,6 +24,14 @@ const csrfToken = computed(() => {
 const selectPage = async (pageId) => {
     if (isLoading.value) return;
     
+    console.log('🔵 SelectFacebookPage: Starting page selection', {
+        pageId,
+        isPopup: props.isPopup,
+        hasOpener: !!window.opener,
+        pagesCount: props.pages?.length,
+        csrfToken: csrfToken.value ? 'EXISTS' : 'MISSING'
+    });
+    
     isLoading.value = true;
     form.page_id = pageId;
     
@@ -31,43 +39,99 @@ const selectPage = async (pageId) => {
     // This ensures we can properly handle the response and close the popup
     if (props.isPopup && window.opener) {
         try {
+            console.log('🔵 SelectFacebookPage: Sending fetch request', {
+                url: '/auth/facebook/save-page',
+                pageId,
+                hasCsrfToken: !!csrfToken.value
+            });
+            
             const response = await fetch('/auth/facebook/save-page', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-CSRF-TOKEN': csrfToken.value,
                     'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
                 },
                 credentials: 'same-origin',
                 body: JSON.stringify({ page_id: pageId })
             });
 
-            const data = await response.json();
+            console.log('🔵 SelectFacebookPage: Response received', {
+                status: response.status,
+                statusText: response.statusText,
+                contentType: response.headers.get('content-type'),
+                ok: response.ok
+            });
+
+            // Check if response is JSON before parsing
+            const contentType = response.headers.get('content-type');
+            let data;
             
-            if (response.ok) {
+            if (contentType && contentType.includes('application/json')) {
+                data = await response.json();
+                console.log('🔵 SelectFacebookPage: JSON data received', data);
+            } else {
+                // If not JSON, it's probably an HTML error page
+                const text = await response.text();
+                console.error('❌ SelectFacebookPage: Non-JSON response received', {
+                    contentType,
+                    status: response.status,
+                    textPreview: text.substring(0, 500)
+                });
+                throw new Error('Server returned an error page instead of JSON. Please try again.');
+            }
+            
+            if (response.ok && data.success !== false) {
+                console.log('✅ SelectFacebookPage: Success! Sending message to parent', {
+                    message: data.message,
+                    hasOpener: !!window.opener
+                });
+                
                 // Send success message to parent window
-                window.opener.postMessage({
-                    type: 'oauth_success',
-                    message: data.message || 'Facebook page connected successfully!'
-                }, window.location.origin);
+                if (window.opener) {
+                    window.opener.postMessage({
+                        type: 'oauth_success',
+                        message: data.message || 'Facebook page connected successfully!'
+                    }, window.location.origin);
+                    
+                    console.log('✅ SelectFacebookPage: Message sent, closing popup');
+                }
                 
                 // Close popup after a short delay to ensure message is sent
                 setTimeout(() => {
-                    window.close();
+                    if (!window.closed) {
+                        window.close();
+                    }
                 }, 100);
             } else {
+                console.error('❌ SelectFacebookPage: Error response', {
+                    success: data.success,
+                    message: data.message,
+                    status: response.status
+                });
+                
                 // Send error message to parent window
-                window.opener.postMessage({
-                    type: 'oauth_error',
-                    message: data.message || 'Failed to connect Facebook page'
-                }, window.location.origin);
+                if (window.opener) {
+                    window.opener.postMessage({
+                        type: 'oauth_error',
+                        message: data.message || 'Failed to connect Facebook page'
+                    }, window.location.origin);
+                }
                 
                 setTimeout(() => {
-                    window.close();
+                    if (!window.closed) {
+                        window.close();
+                    }
                 }, 100);
             }
         } catch (error) {
-            console.error('Error saving Facebook page:', error);
+            console.error('❌ SelectFacebookPage: Exception caught', {
+                error: error.message,
+                stack: error.stack,
+                hasOpener: !!window.opener
+            });
+            
             if (window.opener) {
                 window.opener.postMessage({
                     type: 'oauth_error',
@@ -75,11 +139,14 @@ const selectPage = async (pageId) => {
                 }, window.location.origin);
                 
                 setTimeout(() => {
-                    window.close();
+                    if (!window.closed) {
+                        window.close();
+                    }
                 }, 100);
             }
         } finally {
             isLoading.value = false;
+            console.log('🔵 SelectFacebookPage: Process completed');
         }
     } else {
         // Normal mode - use Inertia form.post

@@ -42,12 +42,19 @@ class SocialAccountController extends Controller
      */
     public function index()
     {
+        // Debug mode - show debug page
+        if (request()->has('debug')) {
+            return view('debug-social-accounts');
+        }
+
         $organizationId = session()->get('current_organization');
 
         if (!$organizationId) {
             Log::warning('Social accounts index: No organization ID in session', [
                 'user_id' => auth()->id(),
-                'session_data' => session()->all()
+                'session_id' => session()->getId(),
+                'session_keys' => array_keys(session()->all()),
+                'all_session_data' => session()->all()
             ]);
         }
 
@@ -57,9 +64,32 @@ class SocialAccountController extends Controller
             ->get();
 
         Log::info('Social accounts loaded', [
+            'user_id' => auth()->id(),
             'organization_id' => $organizationId,
+            'session_id' => session()->getId(),
             'accounts_count' => $accounts->count(),
-            'account_ids' => $accounts->pluck('id')->toArray()
+            'account_details' => $accounts->map(function($account) {
+                return [
+                    'id' => $account->id,
+                    'uuid' => $account->uuid,
+                    'platform' => $account->platform,
+                    'platform_user_id' => $account->platform_user_id,
+                    'platform_username' => $account->platform_username,
+                    'is_active' => $account->is_active,
+                    'created_at' => $account->created_at,
+                    'deleted_at' => $account->deleted_at
+                ];
+            })->toArray(),
+            'total_accounts_in_db' => SocialAccount::where('organization_id', $organizationId)->count(),
+            'total_active_accounts' => SocialAccount::where('organization_id', $organizationId)
+                ->where('is_active', true)
+                ->whereNull('deleted_at')
+                ->count(),
+            'facebook_accounts' => SocialAccount::where('organization_id', $organizationId)
+                ->where('platform', 'facebook')
+                ->whereNull('deleted_at')
+                ->get(['id', 'uuid', 'platform_user_id', 'platform_username', 'is_active'])
+                ->toArray()
         ]);
 
         return Inertia::render('User/SocialAccounts/Index', [
@@ -74,12 +104,25 @@ class SocialAccountController extends Controller
     public function redirectToFacebook()
     {
         $state = bin2hex(random_bytes(16));
-        session(['oauth_state' => $state]);
-        session(['oauth_organization_id' => session()->get('current_organization')]);
-        session(['oauth_popup' => request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest']);
-        
-        // Check if this is a reconnect (force re-authorization)
+        $organizationId = session()->get('current_organization');
+        $isPopup = request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest';
         $forceReauth = request()->has('reconnect') || request()->has('force');
+        
+        session(['oauth_state' => $state]);
+        session(['oauth_organization_id' => $organizationId]);
+        session(['oauth_popup' => $isPopup]);
+
+        Log::info('Facebook OAuth Redirect Started', [
+            'user_id' => auth()->id(),
+            'organization_id' => $organizationId,
+            'is_popup' => $isPopup,
+            'force_reauth' => $forceReauth,
+            'state' => $state,
+            'session_id' => session()->getId(),
+            'has_existing_accounts' => SocialAccount::where('organization_id', $organizationId)
+                ->where('platform', 'facebook')
+                ->count()
+        ]);
 
         return redirect($this->facebookService->getAuthorizationUrl($state, $forceReauth));
     }
@@ -89,12 +132,26 @@ class SocialAccountController extends Controller
      */
     public function handleFacebookCallback(Request $request)
     {
+        $debugInfo = [
+            'user_id' => auth()->id(),
+            'organization_id' => session('oauth_organization_id'),
+            'is_popup' => session('oauth_popup'),
+            'session_id' => session()->getId(),
+            'request_params' => $request->all(),
+            'session_state' => session('oauth_state'),
+            'request_state' => $request->state,
+        ];
+
+        Log::info('Facebook OAuth Callback Received', $debugInfo);
+
         try {
             // Verify state
             if ($request->state !== session('oauth_state')) {
                 Log::warning('Facebook OAuth state mismatch', [
                     'expected' => session('oauth_state'),
-                    'received' => $request->state
+                    'received' => $request->state,
+                    'session_id' => session()->getId(),
+                    'user_id' => auth()->id()
                 ]);
                 throw new \Exception('Invalid state parameter');
             }
@@ -104,30 +161,81 @@ class SocialAccountController extends Controller
                 Log::error('Facebook OAuth error from callback', [
                     'error' => $request->error,
                     'error_description' => $errorMsg,
-                    'error_reason' => $request->error_reason ?? null
+                    'error_reason' => $request->error_reason ?? null,
+                    'debug_info' => $debugInfo
                 ]);
                 throw new \Exception('User denied authorization: ' . $errorMsg);
             }
 
             if (!$request->has('code')) {
                 Log::error('Facebook OAuth callback missing authorization code', [
-                    'request_params' => $request->all()
+                    'request_params' => $request->all(),
+                    'debug_info' => $debugInfo
                 ]);
                 throw new \Exception('Missing authorization code');
             }
 
+            Log::info('Facebook OAuth: Getting access token', [
+                'code' => substr($request->code, 0, 10) . '...',
+                'organization_id' => session('oauth_organization_id')
+            ]);
+
             // Get access token
             $tokenData = $this->facebookService->getAccessToken($request->code);
-            $shortLivedToken = $tokenData['access_token'];
+            $shortLivedToken = $tokenData['access_token'] ?? null;
+
+            if (!$shortLivedToken) {
+                Log::error('Facebook OAuth: Failed to get access token', [
+                    'token_response' => $tokenData,
+                    'debug_info' => $debugInfo
+                ]);
+                throw new \Exception('Failed to get access token from Facebook');
+            }
+
+            Log::info('Facebook OAuth: Exchanging for long-lived token', [
+                'has_short_token' => !empty($shortLivedToken),
+                'organization_id' => session('oauth_organization_id')
+            ]);
 
             // Exchange for long-lived token
             $longLivedTokenData = $this->facebookService->getLongLivedToken($shortLivedToken);
-            $longLivedToken = $longLivedTokenData['access_token'];
+            $longLivedToken = $longLivedTokenData['access_token'] ?? null;
+
+            if (!$longLivedToken) {
+                Log::error('Facebook OAuth: Failed to get long-lived token', [
+                    'token_response' => $longLivedTokenData,
+                    'debug_info' => $debugInfo
+                ]);
+                throw new \Exception('Failed to get long-lived token from Facebook');
+            }
+
+            Log::info('Facebook OAuth: Getting user pages', [
+                'has_long_token' => !empty($longLivedToken),
+                'organization_id' => session('oauth_organization_id')
+            ]);
 
             // Get user's pages
             $pages = $this->facebookService->getUserPages($longLivedToken);
 
+            Log::info('Facebook OAuth: Pages retrieved', [
+                'pages_count' => count($pages),
+                'pages' => array_map(function($page) {
+                    return [
+                        'id' => $page['id'] ?? null,
+                        'name' => $page['name'] ?? null,
+                        'has_access_token' => !empty($page['access_token'] ?? null)
+                    ];
+                }, $pages),
+                'organization_id' => session('oauth_organization_id')
+            ]);
+
             if (empty($pages)) {
+                Log::warning('Facebook OAuth: No pages found', [
+                    'user_id' => auth()->id(),
+                    'organization_id' => session('oauth_organization_id'),
+                    'has_token' => !empty($longLivedToken)
+                ]);
+                
                 // If in popup, return error view instead of redirecting
                 if (session('oauth_popup')) {
                     session()->forget('oauth_popup');
@@ -143,6 +251,12 @@ class SocialAccountController extends Controller
             // Store in session to show page selection
             session(['facebook_pages' => $pages]);
             session(['facebook_user_token' => $longLivedToken]);
+
+            Log::info('Facebook OAuth: Stored pages in session', [
+                'pages_count' => count($pages),
+                'session_has_pages' => !empty(session('facebook_pages')),
+                'organization_id' => session('oauth_organization_id')
+            ]);
 
             // If in popup, render in popup-friendly way
             if (session('oauth_popup')) {
@@ -182,18 +296,100 @@ class SocialAccountController extends Controller
      */
     public function saveFacebookPage(Request $request)
     {
-        $request->validate([
-            'page_id' => 'required|string',
-        ]);
+        $isPopup = session('oauth_popup');
+        
+        // Validate request - handle validation errors for popup mode
+        try {
+            $request->validate([
+                'page_id' => 'required|string',
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            // If in popup mode, ALWAYS return JSON (even if not explicitly requested)
+            if ($isPopup) {
+                $errors = $e->errors();
+                $errorMessage = __('Validation failed');
+                if (isset($errors['page_id'])) {
+                    $errorMessage = implode(', ', $errors['page_id']);
+                }
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => $errorMessage
+                ], 422);
+            }
+            
+            // If request expects JSON, return JSON error
+            if ($request->expectsJson() || $request->header('Accept') === 'application/json') {
+                $errors = $e->errors();
+                $errorMessage = __('Validation failed');
+                if (isset($errors['page_id'])) {
+                    $errorMessage = implode(', ', $errors['page_id']);
+                }
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => $errorMessage
+                ], 422);
+            }
+            
+            // Otherwise, let Laravel handle it normally (redirect with errors)
+            throw $e;
+        }
+
+        $debugInfo = [
+            'user_id' => auth()->id(),
+            'organization_id' => session('oauth_organization_id'),
+            'is_popup' => session('oauth_popup'),
+            'session_id' => session()->getId(),
+            'request_page_id' => $request->page_id,
+            'has_pages_in_session' => !empty(session('facebook_pages')),
+            'has_token_in_session' => !empty(session('facebook_user_token')),
+            'pages_count' => count(session('facebook_pages', [])),
+        ];
+
+        Log::info('Facebook Save Page: Request received', $debugInfo);
 
         try {
             $pages = session('facebook_pages', []);
             $userToken = session('facebook_user_token');
             $organizationId = session('oauth_organization_id');
 
+            Log::info('Facebook Save Page: Session data check', [
+                'pages_count' => count($pages),
+                'has_token' => !empty($userToken),
+                'organization_id' => $organizationId,
+                'session_id' => session()->getId(),
+                'all_session_keys' => array_keys(session()->all())
+            ]);
+
+            // Check if required session data exists
+            if (empty($pages)) {
+                Log::error('Facebook Save Page: No pages in session', $debugInfo);
+                throw new \Exception('Session expired. Please try connecting again.');
+            }
+
+            if (!$organizationId) {
+                Log::error('Facebook Save Page: No organization ID', $debugInfo);
+                throw new \Exception('Organization ID is missing. Please try again.');
+            }
+
             $selectedPage = collect($pages)->firstWhere('id', $request->page_id);
 
+            Log::info('Facebook Save Page: Page selection', [
+                'requested_page_id' => $request->page_id,
+                'found_page' => !empty($selectedPage),
+                'page_name' => $selectedPage['name'] ?? 'NOT FOUND',
+                'available_page_ids' => collect($pages)->pluck('id')->toArray()
+            ]);
+
             if (!$selectedPage) {
+                Log::error('Facebook Save Page: Invalid page selected', [
+                    'requested_page_id' => $request->page_id,
+                    'available_pages' => collect($pages)->map(function($p) {
+                        return ['id' => $p['id'] ?? null, 'name' => $p['name'] ?? null];
+                    })->toArray(),
+                    'debug_info' => $debugInfo
+                ]);
                 throw new \Exception('Invalid page selected');
             }
 
@@ -209,6 +405,19 @@ class SocialAccountController extends Controller
                 ->where('platform', 'facebook')
                 ->where('platform_user_id', $selectedPage['id'])
                 ->first();
+
+            Log::info('Facebook Save Page: Account check', [
+                'page_id' => $selectedPage['id'],
+                'page_name' => $selectedPage['name'],
+                'existing_account_found' => !empty($existingAccount),
+                'existing_account_id' => $existingAccount->id ?? null,
+                'existing_account_uuid' => $existingAccount->uuid ?? null,
+                'existing_account_active' => $existingAccount->is_active ?? null,
+                'all_facebook_accounts_for_org' => SocialAccount::where('organization_id', $organizationId)
+                    ->where('platform', 'facebook')
+                    ->get(['id', 'uuid', 'platform_user_id', 'platform_username', 'is_active'])
+                    ->toArray()
+            ]);
 
             // Ensure UUID is always set (fallback to model boot method if needed)
             $uuid = $existingAccount ? $existingAccount->uuid : (string) Str::uuid();
@@ -240,15 +449,60 @@ class SocialAccountController extends Controller
             ];
 
             if ($existingAccount) {
+                Log::info('Facebook Save Page: Updating existing account', [
+                    'account_id' => $existingAccount->id,
+                    'account_uuid' => $existingAccount->uuid,
+                    'old_is_active' => $existingAccount->is_active,
+                    'new_is_active' => $accountData['is_active']
+                ]);
+                
                 $existingAccount->update($accountData);
+                
+                Log::info('Facebook Save Page: Account updated successfully', [
+                    'account_id' => $existingAccount->id,
+                    'account_uuid' => $existingAccount->uuid,
+                    'is_active' => $existingAccount->fresh()->is_active
+                ]);
+                
                 $message = __('Facebook page reconnected successfully!');
             } else {
+                Log::info('Facebook Save Page: Creating new account', [
+                    'uuid' => $uuid,
+                    'organization_id' => $organizationId,
+                    'platform_user_id' => $selectedPage['id'],
+                    'platform_username' => $selectedPage['name']
+                ]);
+                
                 // Explicitly set UUID before creating to ensure it's always set
                 $newAccount = new SocialAccount($accountData);
                 $newAccount->uuid = $uuid; // Ensure UUID is set
                 $newAccount->save();
+                
+                Log::info('Facebook Save Page: Account created successfully', [
+                    'account_id' => $newAccount->id,
+                    'account_uuid' => $newAccount->uuid,
+                    'is_active' => $newAccount->is_active,
+                    'organization_id' => $newAccount->organization_id
+                ]);
+                
                 $message = __('Facebook page connected successfully!');
             }
+            
+            // Verify account was saved
+            $savedAccount = SocialAccount::where('organization_id', $organizationId)
+                ->where('platform', 'facebook')
+                ->where('platform_user_id', $selectedPage['id'])
+                ->first();
+                
+            Log::info('Facebook Save Page: Verification after save', [
+                'account_found' => !empty($savedAccount),
+                'account_id' => $savedAccount->id ?? null,
+                'account_uuid' => $savedAccount->uuid ?? null,
+                'account_is_active' => $savedAccount->is_active ?? null,
+                'total_facebook_accounts' => SocialAccount::where('organization_id', $organizationId)
+                    ->where('platform', 'facebook')
+                    ->count()
+            ]);
 
             // Clear session data
             $isPopup = session('oauth_popup');
@@ -273,12 +527,31 @@ class SocialAccountController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Facebook save page error: ' . $e->getMessage());
+            Log::error('Facebook save page error: ' . $e->getMessage(), [
+                'exception' => get_class($e),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all(),
+                'session_data' => [
+                    'has_pages' => !empty(session('facebook_pages')),
+                    'has_token' => !empty(session('facebook_user_token')),
+                    'has_org_id' => !empty(session('oauth_organization_id')),
+                    'is_popup' => session('oauth_popup'),
+                ]
+            ]);
             
             $isPopup = session('oauth_popup');
             
-            // If in popup and expects JSON, return JSON error
-            if ($isPopup && ($request->expectsJson() || $request->header('Accept') === 'application/json')) {
+            // If in popup mode, ALWAYS return JSON (even if not explicitly requested)
+            // This prevents HTML error pages from being returned
+            if ($isPopup) {
+                return response()->json([
+                    'success' => false,
+                    'message' => __('Failed to save Facebook page: ') . $e->getMessage()
+                ], 400);
+            }
+            
+            // If request expects JSON, return JSON error
+            if ($request->expectsJson() || $request->header('Accept') === 'application/json') {
                 return response()->json([
                     'success' => false,
                     'message' => __('Failed to save Facebook page: ') . $e->getMessage()
