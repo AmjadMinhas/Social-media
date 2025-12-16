@@ -75,11 +75,28 @@ class SocialAccountController extends Controller
         try {
             // Verify state
             if ($request->state !== session('oauth_state')) {
+                Log::warning('Facebook OAuth state mismatch', [
+                    'expected' => session('oauth_state'),
+                    'received' => $request->state
+                ]);
                 throw new \Exception('Invalid state parameter');
             }
 
             if ($request->has('error')) {
-                throw new \Exception('User denied authorization: ' . $request->error_description);
+                $errorMsg = $request->error_description ?? $request->error ?? 'Unknown error';
+                Log::error('Facebook OAuth error from callback', [
+                    'error' => $request->error,
+                    'error_description' => $errorMsg,
+                    'error_reason' => $request->error_reason ?? null
+                ]);
+                throw new \Exception('User denied authorization: ' . $errorMsg);
+            }
+
+            if (!$request->has('code')) {
+                Log::error('Facebook OAuth callback missing authorization code', [
+                    'request_params' => $request->all()
+                ]);
+                throw new \Exception('Missing authorization code');
             }
 
             // Get access token
@@ -167,8 +184,20 @@ class SocialAccountController extends Controller
                 ->where('platform_user_id', $selectedPage['id'])
                 ->first();
 
+            // Ensure UUID is always set (fallback to model boot method if needed)
+            $uuid = $existingAccount ? $existingAccount->uuid : (string) Str::uuid();
+            
+            // Validate required fields before creating
+            if (!$organizationId) {
+                throw new \Exception('Organization ID is missing. Please try again.');
+            }
+            
+            if (!$selectedPage['id'] || !$selectedPage['name']) {
+                throw new \Exception('Invalid page data received from Facebook.');
+            }
+
             $accountData = [
-                'uuid' => $existingAccount ? $existingAccount->uuid : Str::uuid(),
+                'uuid' => $uuid,
                 'organization_id' => $organizationId,
                 'user_id' => auth()->id(),
                 'platform' => 'facebook',
@@ -188,7 +217,10 @@ class SocialAccountController extends Controller
                 $existingAccount->update($accountData);
                 $message = __('Facebook page reconnected successfully!');
             } else {
-                SocialAccount::create($accountData);
+                // Explicitly set UUID before creating to ensure it's always set
+                $newAccount = new SocialAccount($accountData);
+                $newAccount->uuid = $uuid; // Ensure UUID is set
+                $newAccount->save();
                 $message = __('Facebook page connected successfully!');
             }
 
@@ -196,8 +228,16 @@ class SocialAccountController extends Controller
             $isPopup = session('oauth_popup');
             session()->forget(['facebook_pages', 'facebook_user_token', 'oauth_state', 'oauth_organization_id', 'oauth_popup']);
 
-            // Check if opened in popup
+            // Check if opened in popup - return JSON response for AJAX/fetch requests
             if ($isPopup) {
+                // If request expects JSON (from fetch/AJAX), return JSON
+                if ($request->expectsJson() || $request->header('Accept') === 'application/json') {
+                    return response()->json([
+                        'success' => true,
+                        'message' => $message
+                    ]);
+                }
+                // Otherwise return the callback view for traditional form submissions
                 return view('oauth-callback', ['status' => ['type' => 'success', 'message' => $message]]);
             }
 
@@ -208,6 +248,16 @@ class SocialAccountController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Facebook save page error: ' . $e->getMessage());
+            
+            $isPopup = session('oauth_popup');
+            
+            // If in popup and expects JSON, return JSON error
+            if ($isPopup && ($request->expectsJson() || $request->header('Accept') === 'application/json')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => __('Failed to save Facebook page: ') . $e->getMessage()
+                ], 400);
+            }
             
             return redirect('/social-accounts')->with('status', [
                 'type' => 'error',

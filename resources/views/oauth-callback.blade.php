@@ -7,14 +7,20 @@
 </head>
 <body>
     <script>
+        // Use window.location.origin to match the current origin
+        const targetOrigin = window.location.origin;
+        
         @if(session('status'))
             // Success
             if (window.opener) {
                 window.opener.postMessage({
                     type: 'oauth_success',
                     message: '{{ session('status')['message'] ?? 'Connected successfully!' }}'
-                }, '{{ config('app.url') }}');
-                window.close();
+                }, targetOrigin);
+                // Close after a short delay to ensure message is sent
+                setTimeout(function() {
+                    window.close();
+                }, 100);
             } else {
                 // Not in popup, redirect normally
                 window.location.href = '/social-accounts';
@@ -25,8 +31,11 @@
                 window.opener.postMessage({
                     type: 'oauth_error',
                     message: '{{ $error }}'
-                }, '{{ config('app.url') }}');
-                window.close();
+                }, targetOrigin);
+                // Close after a short delay to ensure message is sent
+                setTimeout(function() {
+                    window.close();
+                }, 100);
             } else {
                 // Not in popup, redirect with error
                 window.location.href = '/social-accounts?error=' + encodeURIComponent('{{ $error }}');
@@ -37,8 +46,11 @@
                 window.opener.postMessage({
                     type: 'oauth_success',
                     message: 'Connected successfully!'
-                }, '{{ config('app.url') }}');
-                window.close();
+                }, targetOrigin);
+                // Close after a short delay to ensure message is sent
+                setTimeout(function() {
+                    window.close();
+                }, 100);
             } else {
                 window.location.href = '/social-accounts';
             }

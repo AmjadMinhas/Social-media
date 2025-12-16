@@ -262,3 +262,5 @@ class WhatsAppDeviceSessionService
         return $devices[$deviceId] ?? null;
     }
 }
+
+

@@ -26,7 +26,8 @@ const connectAccount = () => {
     const left = (window.screen.width - width) / 2;
     const top = (window.screen.height - height) / 2;
 
-    const authUrl = `/auth/${props.platform}`;
+    // Add popup parameter to indicate this is opened in a popup
+    const authUrl = `/auth/${props.platform}?popup=1`;
     
     popupWindow.value = window.open(
         authUrl,
@@ -34,13 +35,22 @@ const connectAccount = () => {
         `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`
     );
 
-    // Listen for OAuth completion
+    // Listen for OAuth completion (fallback if postMessage doesn't work)
     const checkClosed = setInterval(() => {
         if (popupWindow.value?.closed) {
             clearInterval(checkClosed);
             isLoading.value = false;
-            // Refresh the page to show new account
-            router.reload({ only: ['accounts'] });
+            // Only reload if we haven't received a message (fallback)
+            // The handleMessage function will handle the reload if postMessage works
+            setTimeout(() => {
+                if (isLoading.value === false) {
+                    router.reload({ 
+                        only: ['accounts'],
+                        preserveState: false,
+                        preserveScroll: false
+                    });
+                }
+            }, 1000);
         }
     }, 500);
 
@@ -57,7 +67,13 @@ const handleMessage = (event) => {
             popupWindow.value.close();
         }
         isLoading.value = false;
-        router.reload({ only: ['accounts'] });
+        // Reload the page to refresh accounts list
+        // Use full reload to ensure all data is refreshed including post scheduler
+        router.reload({ 
+            only: ['accounts'],
+            preserveState: false,
+            preserveScroll: false
+        });
         emit('close');
         window.removeEventListener('message', handleMessage);
     } else if (event.data.type === 'oauth_error') {
@@ -147,6 +163,8 @@ const getPlatformIcon = (platform) => {
         </div>
     </div>
 </template>
+
+
 
 
 
