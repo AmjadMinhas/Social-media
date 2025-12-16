@@ -27,13 +27,42 @@ const connectAccount = () => {
     const top = (window.screen.height - height) / 2;
 
     // Add popup parameter to indicate this is opened in a popup
-    const authUrl = `/auth/${props.platform}?popup=1`;
+    // Add force parameter to force re-authorization if reconnecting
+    const isReconnect = new URLSearchParams(window.location.search).get('reconnect') === '1';
+    const authUrl = `/auth/${props.platform}?popup=1${isReconnect ? '&force=1' : ''}`;
     
     popupWindow.value = window.open(
         authUrl,
         `${props.platformName} OAuth`,
         `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`
     );
+    
+    // Monitor popup for navigation to detect Facebook redirects
+    if (popupWindow.value) {
+        const checkPopup = setInterval(() => {
+            try {
+                // Check if popup has navigated to Facebook OAuth (means it's redirecting inside)
+                if (popupWindow.value && !popupWindow.value.closed) {
+                    const popupUrl = popupWindow.value.location.href;
+                    // If popup navigates to Facebook OAuth or our callback, it's working
+                    if (popupUrl.includes('facebook.com') || popupUrl.includes('/auth/facebook/callback')) {
+                        // This is expected, let it continue
+                    }
+                }
+            } catch (e) {
+                // Cross-origin error is expected when popup is on Facebook
+                // This is normal, continue monitoring
+            }
+        }, 1000);
+        
+        // Clear interval when popup closes
+        const originalCheckClosed = setInterval(() => {
+            if (popupWindow.value?.closed) {
+                clearInterval(checkPopup);
+                clearInterval(originalCheckClosed);
+            }
+        }, 500);
+    }
 
     // Listen for OAuth completion (fallback if postMessage doesn't work)
     const checkClosed = setInterval(() => {

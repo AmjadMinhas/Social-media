@@ -44,9 +44,23 @@ class SocialAccountController extends Controller
     {
         $organizationId = session()->get('current_organization');
 
+        if (!$organizationId) {
+            Log::warning('Social accounts index: No organization ID in session', [
+                'user_id' => auth()->id(),
+                'session_data' => session()->all()
+            ]);
+        }
+
         $accounts = SocialAccount::where('organization_id', $organizationId)
+            ->whereNull('deleted_at') // Exclude soft-deleted accounts
             ->orderBy('created_at', 'desc')
             ->get();
+
+        Log::info('Social accounts loaded', [
+            'organization_id' => $organizationId,
+            'accounts_count' => $accounts->count(),
+            'account_ids' => $accounts->pluck('id')->toArray()
+        ]);
 
         return Inertia::render('User/SocialAccounts/Index', [
             'title' => __('Social Media Accounts'),
@@ -63,8 +77,11 @@ class SocialAccountController extends Controller
         session(['oauth_state' => $state]);
         session(['oauth_organization_id' => session()->get('current_organization')]);
         session(['oauth_popup' => request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest']);
+        
+        // Check if this is a reconnect (force re-authorization)
+        $forceReauth = request()->has('reconnect') || request()->has('force');
 
-        return redirect($this->facebookService->getAuthorizationUrl($state));
+        return redirect($this->facebookService->getAuthorizationUrl($state, $forceReauth));
     }
 
     /**
@@ -111,6 +128,12 @@ class SocialAccountController extends Controller
             $pages = $this->facebookService->getUserPages($longLivedToken);
 
             if (empty($pages)) {
+                // If in popup, return error view instead of redirecting
+                if (session('oauth_popup')) {
+                    session()->forget('oauth_popup');
+                    return view('oauth-callback', ['error' => __('No Facebook pages found. Please create a Facebook page first.')]);
+                }
+                
                 return redirect('/social-accounts')->with('status', [
                     'type' => 'error',
                     'message' => __('No Facebook pages found. Please create a Facebook page first.')
@@ -123,6 +146,8 @@ class SocialAccountController extends Controller
 
             // If in popup, render in popup-friendly way
             if (session('oauth_popup')) {
+                // Make sure we're not redirecting to social-accounts inside popup
+                // Render the page selection directly
                 return Inertia::render('User/SocialAccounts/SelectFacebookPage', [
                     'title' => __('Select Facebook Page'),
                     'pages' => $pages,
@@ -133,6 +158,7 @@ class SocialAccountController extends Controller
             return Inertia::render('User/SocialAccounts/SelectFacebookPage', [
                 'title' => __('Select Facebook Page'),
                 'pages' => $pages,
+                'isPopup' => false,
             ]);
 
         } catch (\Exception $e) {

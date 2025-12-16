@@ -26,6 +26,54 @@ const verifyAccount = (uuid) => {
     router.post(`/social-accounts/${uuid}/verify`);
 };
 
+const reconnectAccount = (platform, platformName) => {
+    // Reconnect should open a new OAuth flow directly with force parameter
+    // Open OAuth in popup window with force parameter to force re-authorization
+    const width = 600;
+    const height = 700;
+    const left = (window.screen.width - width) / 2;
+    const top = (window.screen.height - height) / 2;
+
+    const authUrl = `/auth/${platform}?popup=1&force=1&reconnect=1`;
+    
+    const popupWindow = window.open(
+        authUrl,
+        `${platformName} OAuth`,
+        `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`
+    );
+
+    // Listen for popup to close and reload accounts
+    const checkClosed = setInterval(() => {
+        if (popupWindow?.closed) {
+            clearInterval(checkClosed);
+            router.reload({ 
+                only: ['accounts'],
+                preserveState: false,
+                preserveScroll: false
+            });
+        }
+    }, 500);
+
+    // Listen for message from popup
+    const handleMessage = (event) => {
+        if (event.origin !== window.location.origin) return;
+        
+        if (event.data.type === 'oauth_success' || event.data.type === 'oauth_error') {
+            if (popupWindow && !popupWindow.closed) {
+                popupWindow.close();
+            }
+            router.reload({ 
+                only: ['accounts'],
+                preserveState: false,
+                preserveScroll: false
+            });
+            window.removeEventListener('message', handleMessage);
+        }
+    };
+    
+    window.addEventListener('message', handleMessage);
+};
+
 const openConnectModal = (platform, platformName) => {
     selectedPlatform.value = platform;
     selectedPlatformName.value = platformName;
@@ -182,7 +230,7 @@ const formatDate = (dateString) => {
                                 </div>
 
                                 <div class="flex items-center space-x-2">
-                                    <button v-if="!account.is_active || account.is_token_expired" @click="verifyAccount(account.uuid)" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition text-sm">
+                                    <button v-if="!account.is_active || account.is_token_expired" @click="reconnectAccount(account.platform, account.platform_name)" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition text-sm">
                                         {{ $t('Reconnect') }}
                                     </button>
                                     <button @click="openAlert($t('Are you sure you want to disconnect this account?'), disconnectAccount, [account.uuid])" class="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition text-sm">

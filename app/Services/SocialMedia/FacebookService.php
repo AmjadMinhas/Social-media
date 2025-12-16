@@ -22,21 +22,28 @@ class FacebookService
     /**
      * Get OAuth authorization URL
      */
-    public function getAuthorizationUrl($state = null)
+    public function getAuthorizationUrl($state = null, $forceReauth = false)
     {
         $appId = config('socialmedia.facebook.app_id');
         $redirectUri = config('socialmedia.facebook.redirect_uri');
         $permissions = implode(',', config('socialmedia.facebook.permissions'));
 
-        $params = http_build_query([
+        $params = [
             'client_id' => $appId,
             'redirect_uri' => $redirectUri,
             'scope' => $permissions,
             'state' => $state ?? bin2hex(random_bytes(16)),
             'response_type' => 'code',
-        ]);
+        ];
 
-        return "https://www.facebook.com/{$this->apiVersion}/dialog/oauth?{$params}";
+        // Add prompt parameter to force re-authorization if needed
+        // This forces Facebook to show the authorization dialog even if already connected
+        if ($forceReauth) {
+            $params['prompt'] = 'consent';
+            $params['auth_type'] = 'rerequest';
+        }
+
+        return "https://www.facebook.com/{$this->apiVersion}/dialog/oauth?" . http_build_query($params);
     }
 
     /**
