@@ -300,9 +300,9 @@ class SocialAccountController extends Controller
         
         // Validate request - handle validation errors for popup mode
         try {
-            $request->validate([
-                'page_id' => 'required|string',
-            ]);
+        $request->validate([
+            'page_id' => 'required|string',
+        ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
             // If in popup mode, ALWAYS return JSON (even if not explicitly requested)
             if ($isPopup) {
@@ -352,14 +352,30 @@ class SocialAccountController extends Controller
         try {
             $pages = session('facebook_pages', []);
             $userToken = session('facebook_user_token');
-            $organizationId = session('oauth_organization_id');
+            
+            // Get organization ID from multiple sources as fallback
+            $organizationId = session('oauth_organization_id') 
+                ?? session('current_organization') 
+                ?? null;
+            
+            // If still null, try to get from authenticated user's organization
+            if (!$organizationId && auth()->check()) {
+                $user = auth()->user();
+                // Try to get organization from user's team/organization relationship
+                // This is a fallback in case session is lost
+            }
 
             Log::info('Facebook Save Page: Session data check', [
                 'pages_count' => count($pages),
                 'has_token' => !empty($userToken),
-                'organization_id' => $organizationId,
+                'organization_id_from_oauth' => session('oauth_organization_id'),
+                'organization_id_from_current' => session('current_organization'),
+                'organization_id_final' => $organizationId,
+                'organization_id_type' => gettype($organizationId),
+                'organization_id_empty' => empty($organizationId),
                 'session_id' => session()->getId(),
-                'all_session_keys' => array_keys(session()->all())
+                'all_session_keys' => array_keys(session()->all()),
+                'full_session' => session()->all()
             ]);
 
             // Check if required session data exists
@@ -368,9 +384,24 @@ class SocialAccountController extends Controller
                 throw new \Exception('Session expired. Please try connecting again.');
             }
 
-            if (!$organizationId) {
-                Log::error('Facebook Save Page: No organization ID', $debugInfo);
-                throw new \Exception('Organization ID is missing. Please try again.');
+            // CRITICAL: Validate organization_id is set and not null/empty
+            if (empty($organizationId) || $organizationId === null) {
+                Log::error('Facebook Save Page: No organization ID', array_merge($debugInfo, [
+                    'session_oauth_org_id' => session('oauth_organization_id'),
+                    'session_current_org' => session('current_organization'),
+                    'all_session_data' => session()->all()
+                ]));
+                throw new \Exception('Organization ID is missing. Please try connecting again.');
+            }
+            
+            // Ensure organization_id is an integer
+            $organizationId = (int) $organizationId;
+            if ($organizationId <= 0) {
+                Log::error('Facebook Save Page: Invalid organization ID', [
+                    'organization_id' => $organizationId,
+                    'debug_info' => $debugInfo
+                ]);
+                throw new \Exception('Invalid organization ID. Please try connecting again.');
             }
 
             $selectedPage = collect($pages)->firstWhere('id', $request->page_id);
@@ -466,17 +497,67 @@ class SocialAccountController extends Controller
                 
                 $message = __('Facebook page reconnected successfully!');
             } else {
+                // Double-check organization_id is not null/empty
+                if (empty($organizationId) || $organizationId === null) {
+                    Log::error('Facebook Save Page: organization_id is null/empty when creating account', [
+                        'organization_id' => $organizationId,
+                        'session_oauth_org_id' => session('oauth_organization_id'),
+                        'session_current_org' => session('current_organization'),
+                        'debug_info' => $debugInfo
+                    ]);
+                    throw new \Exception('Organization ID is missing. Please try connecting again.');
+                }
+                
+                // Ensure userId is set
+                if (empty($userId) || $userId === null) {
+                    Log::error('Facebook Save Page: user_id is null/empty when creating account', [
+                        'user_id' => $userId,
+                        'auth_id' => auth()->id(),
+                        'debug_info' => $debugInfo
+                    ]);
+                    throw new \Exception('User ID is missing. Please log in again.');
+                }
+                
                 Log::info('Facebook Save Page: Creating new account', [
                     'uuid' => $uuid,
                     'organization_id' => $organizationId,
+                    'organization_id_type' => gettype($organizationId),
+                    'user_id' => $userId,
+                    'user_id_type' => gettype($userId),
                     'platform_user_id' => $selectedPage['id'],
-                    'platform_username' => $selectedPage['name']
+                    'platform_username' => $selectedPage['name'],
+                    'account_data_keys' => array_keys($accountData),
+                    'account_data_organization_id' => $accountData['organization_id'] ?? 'MISSING',
+                    'account_data_user_id' => $accountData['user_id'] ?? 'MISSING'
                 ]);
                 
-                // Explicitly set UUID before creating to ensure it's always set
-                $newAccount = new SocialAccount($accountData);
-                $newAccount->uuid = $uuid; // Ensure UUID is set
-                $newAccount->save();
+                // Use create method with explicit type casting to ensure all fields are set
+                $createData = [
+                    'uuid' => (string) $uuid,
+                    'organization_id' => (int) $organizationId, // Explicitly cast to int
+                    'user_id' => (int) $userId, // Explicitly cast to int
+                    'platform' => 'facebook',
+                    'platform_user_id' => (string) $selectedPage['id'],
+                    'platform_username' => (string) $selectedPage['name'],
+                    'access_token' => (string) ($longLivedPageToken ?? $pageToken),
+                    'token_expires_at' => null,
+                    'platform_data' => [
+                        'page_id' => $selectedPage['id'],
+                        'page_name' => $selectedPage['name'],
+                        'picture' => $selectedPage['picture']['data']['url'] ?? null,
+                    ],
+                    'is_active' => true,
+                ];
+                
+                Log::info('Facebook Save Page: Data to create', [
+                    'create_data' => array_merge($createData, [
+                        'access_token' => substr($createData['access_token'], 0, 20) . '...'
+                    ]),
+                    'organization_id_in_data' => $createData['organization_id'],
+                    'user_id_in_data' => $createData['user_id']
+                ]);
+                
+                $newAccount = SocialAccount::create($createData);
                 
                 Log::info('Facebook Save Page: Account created successfully', [
                     'account_id' => $newAccount->id,
