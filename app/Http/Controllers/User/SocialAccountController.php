@@ -40,6 +40,91 @@ class SocialAccountController extends Controller
     /**
      * Display social accounts
      */
+    /**
+     * DEBUG ONLY - Test Facebook save logic without OAuth
+     * Access: /debug/test-facebook-save
+     * REMOVE THIS IN PRODUCTION
+     */
+    public function debugTestFacebookSave()
+    {
+        if (app()->environment('production')) {
+            abort(404);
+        }
+
+        $organizationId = session()->get('current_organization');
+        $userId = auth()->id();
+
+        // Simulate session data that would be set by OAuth
+        $testPageId = 'test_page_' . time();
+        $testPageName = 'Test Facebook Page';
+        
+        try {
+            // Check if we have required data
+            if (!$organizationId) {
+                return response()->json([
+                    'error' => 'No organization_id in session',
+                    'session' => session()->all()
+                ]);
+            }
+
+            if (!$userId) {
+                return response()->json([
+                    'error' => 'Not logged in',
+                ]);
+            }
+
+            // Try to create a test account
+            $uuid = (string) Str::uuid();
+            
+            $account = SocialAccount::create([
+                'uuid' => $uuid,
+                'organization_id' => (int) $organizationId,
+                'user_id' => (int) $userId,
+                'platform' => 'facebook',
+                'platform_user_id' => $testPageId,
+                'platform_username' => $testPageName,
+                'access_token' => 'test_token_' . time(),
+                'token_expires_at' => null,
+                'platform_data' => [
+                    'page_id' => $testPageId,
+                    'page_name' => $testPageName,
+                    'picture' => null,
+                ],
+                'is_active' => true,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Test account created successfully!',
+                'account' => [
+                    'id' => $account->id,
+                    'uuid' => $account->uuid,
+                    'organization_id' => $account->organization_id,
+                    'user_id' => $account->user_id,
+                    'platform' => $account->platform,
+                    'platform_user_id' => $account->platform_user_id,
+                    'is_active' => $account->is_active,
+                ],
+                'debug' => [
+                    'session_org_id' => session()->get('current_organization'),
+                    'auth_user_id' => auth()->id(),
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'debug' => [
+                    'organization_id' => $organizationId,
+                    'user_id' => $userId,
+                    'session' => session()->all()
+                ]
+            ], 500);
+        }
+    }
+
     public function index()
     {
         // Debug mode - show debug page
@@ -458,14 +543,20 @@ class SocialAccountController extends Controller
                 throw new \Exception('Organization ID is missing. Please try again.');
             }
             
+            // Get user ID
+            $userId = auth()->id();
+            if (!$userId) {
+                throw new \Exception('User not authenticated. Please log in again.');
+            }
+            
             if (!$selectedPage['id'] || !$selectedPage['name']) {
                 throw new \Exception('Invalid page data received from Facebook.');
             }
 
             $accountData = [
                 'uuid' => $uuid,
-                'organization_id' => $organizationId,
-                'user_id' => auth()->id(),
+                'organization_id' => (int) $organizationId,
+                'user_id' => (int) $userId,
                 'platform' => 'facebook',
                 'platform_user_id' => $selectedPage['id'],
                 'platform_username' => $selectedPage['name'],

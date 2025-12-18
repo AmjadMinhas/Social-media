@@ -102,6 +102,9 @@ Route::middleware(['auth:user,admin'])->group(function () {
     Route::get('/auth/facebook', [App\Http\Controllers\User\SocialAccountController::class, 'redirectToFacebook']);
     Route::get('/auth/facebook/callback', [App\Http\Controllers\User\SocialAccountController::class, 'handleFacebookCallback']);
     Route::post('/auth/facebook/save-page', [App\Http\Controllers\User\SocialAccountController::class, 'saveFacebookPage']);
+    
+    // Debug route for testing Facebook connection locally (REMOVE IN PRODUCTION)
+    Route::get('/debug/test-facebook-save', [App\Http\Controllers\User\SocialAccountController::class, 'debugTestFacebookSave']);
     Route::get('/auth/linkedin', [App\Http\Controllers\User\SocialAccountController::class, 'redirectToLinkedIn']);
     Route::get('/auth/linkedin/callback', [App\Http\Controllers\User\SocialAccountController::class, 'handleLinkedInCallback']);
     Route::get('/auth/instagram', [App\Http\Controllers\User\SocialAccountController::class, 'redirectToInstagram']);
