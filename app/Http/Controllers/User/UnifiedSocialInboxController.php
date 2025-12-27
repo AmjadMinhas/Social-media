@@ -164,13 +164,65 @@ class UnifiedSocialInboxController extends BaseController
     public function syncMessages(Request $request)
     {
         $organizationId = session()->get('current_organization');
+        
+        if (!$organizationId) {
+            return Redirect::back()->with(
+                'status', [
+                    'type' => 'error',
+                    'message' => __('Please select an organization first')
+                ]
+            );
+        }
 
-        $result = $this->inboxService->syncAllPlatforms($organizationId);
+        \Illuminate\Support\Facades\Log::info('Sync messages requested', [
+            'organization_id' => $organizationId,
+            'user_id' => auth()->id()
+        ]);
+
+        try {
+            $result = $this->inboxService->syncAllPlatforms($organizationId);
+
+            \Illuminate\Support\Facades\Log::info('Sync messages completed', [
+                'organization_id' => $organizationId,
+                'result' => $result
+            ]);
+
+            $message = $result['message'] ?? __('Sync completed');
+            if (isset($result['results'])) {
+                $message .= sprintf(
+                    ' - Facebook: %d, Instagram: %d, Twitter: %d, Total: %d',
+                    $result['results']['facebook'] ?? 0,
+                    $result['results']['instagram'] ?? 0,
+                    $result['results']['twitter'] ?? 0,
+                    $result['results']['total'] ?? 0
+                );
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Sync messages error', [
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            // Check if it's a permission error
+            if (str_contains($e->getMessage(), 'pages_messaging')) {
+                $message = __('Facebook Messenger permission error. Please disconnect and reconnect your Facebook page to grant the required permissions.');
+            } else {
+                $message = __('Sync failed: ') . $e->getMessage();
+            }
+            
+            return Redirect::back()->with(
+                'status', [
+                    'type' => 'error',
+                    'message' => $message
+                ]
+            );
+        }
 
         return Redirect::back()->with(
             'status', [
                 'type' => $result['success'] ? 'success' : 'error',
-                'message' => $result['message'] ?? __('Sync completed'),
+                'message' => $message,
                 'results' => $result['results'] ?? null,
             ]
         );

@@ -17,6 +17,7 @@ return [
             'pages_read_engagement',
             'pages_manage_posts',
             'pages_manage_engagement',
+            'pages_messaging', // Required for Facebook Messenger (sending and reading messages)
         ],
     ],
 
@@ -30,10 +31,12 @@ return [
         'client_secret' => env('LINKEDIN_CLIENT_SECRET'),
         'redirect_uri' => env('APP_URL') . '/auth/linkedin/callback',
         'scopes' => [
+            'openid',
             'profile',
-            'w_member_social',
             'email',
+            'w_member_social',
         ],
+
     ],
 
     /*

@@ -38,6 +38,18 @@ class TikTokService
         $clientKey = config('socialmedia.tiktok.client_key');
         $redirectUri = config('socialmedia.tiktok.redirect_uri');
         
+        // Validate client_key is set
+        if (empty($clientKey)) {
+            Log::error('TikTok OAuth: client_key is not set in configuration');
+            throw new Exception('TikTok client_key is not configured. Please set TIKTOK_CLIENT_KEY in your .env file.');
+        }
+        
+        // Validate redirect_uri is set
+        if (empty($redirectUri)) {
+            Log::error('TikTok OAuth: redirect_uri is not set in configuration');
+            throw new Exception('TikTok redirect_uri is not configured. Please set APP_URL in your .env file.');
+        }
+        
         // Generate PKCE if not provided
         if (!$codeVerifier || !$codeChallenge) {
             $pkce = $this->generatePKCE();
@@ -63,6 +75,13 @@ class TikTokService
             'code_challenge' => $codeChallenge,
             'code_challenge_method' => 'S256',
         ];
+        
+        Log::info('TikTok OAuth: Generating authorization URL', [
+            'has_client_key' => !empty($clientKey),
+            'client_key_length' => strlen($clientKey ?? ''),
+            'redirect_uri' => $redirectUri,
+            'auth_url' => $this->authUrl,
+        ]);
 
         return $this->authUrl . '?' . http_build_query($params);
     }

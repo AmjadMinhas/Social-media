@@ -299,8 +299,18 @@ class Contact extends Model {
 
     public function getFormattedPhoneNumberAttribute($value)
     {
-        // Use the phone() helper function to format the phone number to international format
-        return phone($this->phone)->formatInternational();
+        // Skip formatting if phone is not a valid phone number (e.g., Facebook IDs like "fb_123456")
+        if (empty($this->phone) || str_starts_with($this->phone, 'fb_') || str_starts_with($this->phone, 'ig_') || str_starts_with($this->phone, 'tw_')) {
+            return $this->phone ?? '';
+        }
+        
+        try {
+            // Use the phone() helper function to format the phone number to international format
+            return phone($this->phone)->formatInternational();
+        } catch (\Exception $e) {
+            // If phone number formatting fails, return the original phone value
+            return $this->phone ?? '';
+        }
     }
 
     protected function decodeUnicodeBytes($value)

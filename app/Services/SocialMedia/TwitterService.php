@@ -7,6 +7,7 @@ use App\Models\ScheduledPost;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Exception;
+use GuzzleHttp\Client as GuzzleClient;
 
 class TwitterService
 {
@@ -61,28 +62,255 @@ class TwitterService
                 $codeVerifier = session('twitter_code_verifier');
             }
 
-            $response = Http::asForm()
-                ->withBasicAuth(
-                    config('socialmedia.twitter.client_id'),
-                    config('socialmedia.twitter.client_secret')
-                )
-                ->post("{$this->authUrl}/token", [
+            if (!$codeVerifier) {
+                Log::error('Twitter OAuth: Missing code_verifier in session');
+                throw new Exception('Missing code verifier. Please try connecting again.');
+            }
+
+            $redirectUri = config('socialmedia.twitter.redirect_uri');
+            $clientId = config('socialmedia.twitter.client_id');
+            $clientSecret = config('socialmedia.twitter.client_secret');
+            
+            // Validate credentials
+            if (empty($clientId) || empty($clientSecret)) {
+                throw new Exception('Twitter client credentials are not configured. Please set TWITTER_CLIENT_ID and TWITTER_CLIENT_SECRET in your .env file.');
+            }
+            
+            Log::info('Twitter OAuth: Exchanging code for token', [
+                'has_code' => !empty($code),
+                'has_code_verifier' => !empty($codeVerifier),
+                'redirect_uri' => $redirectUri,
+                'has_client_id' => !empty($clientId),
+                'has_client_secret' => !empty($clientSecret),
+            ]);
+
+            // Twitter OAuth 2.0 token endpoint - must use api.twitter.com, not twitter.com
+            $tokenUrl = "https://api.twitter.com/2/oauth2/token";
+            
+            // Manually create Basic Auth header (Twitter requires explicit Base64 encoding)
+            // IMPORTANT: Do NOT URL-encode the credentials before base64 encoding
+            $credentials = base64_encode($clientId . ':' . $clientSecret);
+            
+            // Build form data manually to ensure proper encoding
+            $formData = http_build_query([
+                'code' => $code,
+                'grant_type' => 'authorization_code',
+                'redirect_uri' => $redirectUri,
+                'code_verifier' => $codeVerifier,
+            ]);
+            
+            Log::info('Twitter OAuth: Making token request', [
+                'url' => $tokenUrl,
+                'client_id_length' => strlen($clientId),
+                'client_secret_length' => strlen($clientSecret),
+                'redirect_uri' => $redirectUri,
+                'credentials_header_length' => strlen($credentials),
+                'form_data_length' => strlen($formData),
+            ]);
+            
+            // Use Guzzle with built-in auth option (like PayPalService does)
+            // This handles Basic Auth header automatically
+            $guzzleClient = new GuzzleClient([
+                'timeout' => 30,
+            ]);
+            
+            try {
+                // Build form data
+                // Note: When using Basic Auth, do NOT include client_id in body (Twitter requirement)
+                $formParams = [
                     'code' => $code,
                     'grant_type' => 'authorization_code',
-                    'redirect_uri' => config('socialmedia.twitter.redirect_uri'),
+                    'redirect_uri' => $redirectUri,
                     'code_verifier' => $codeVerifier,
+                ];
+                
+                // Create Basic Auth credentials (do NOT URL-encode before base64)
+                // Standard Basic Auth format: base64(client_id:client_secret)
+                $credentials = base64_encode($clientId . ':' . $clientSecret);
+                
+                // Debug: Log the exact request we're about to send
+                Log::info('Twitter OAuth: About to send cURL request', [
+                    'url' => $tokenUrl,
+                    'using_curl' => true,
+                    'client_id_length' => strlen($clientId),
+                    'client_secret_length' => strlen($clientSecret),
+                    'credentials_base64_length' => strlen($credentials),
+                    'auth_header_preview' => 'Basic ' . substr($credentials, 0, 20) . '...',
                 ]);
+                
+                // Try using cURL directly to have complete control
+                $ch = curl_init($tokenUrl);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_POST, true);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+                curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                    'Authorization: Basic ' . $credentials,
+                    'Content-Type: application/x-www-form-urlencoded',
+                    'Accept: application/json',
+                ]);
+                curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($formParams));
+                
+                // Enable verbose for debugging (logs to error log)
+                $verbose = fopen('php://temp', 'w+');
+                curl_setopt($ch, CURLOPT_VERBOSE, true);
+                curl_setopt($ch, CURLOPT_STDERR, $verbose);
+                
+                // Enable verbose output for debugging (optional, but useful)
+                // curl_setopt($ch, CURLOPT_VERBOSE, true);
+                
+                $responseBody = curl_exec($ch);
+                $responseStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $curlError = curl_error($ch);
+                
+                // Log verbose output if available
+                if ($verbose) {
+                    rewind($verbose);
+                    $verboseLog = stream_get_contents($verbose);
+                    fclose($verbose);
+                    if (!empty($verboseLog)) {
+                        Log::info('Twitter OAuth: cURL verbose output', ['verbose' => $verboseLog]);
+                    }
+                }
+                
+                curl_close($ch);
+                
+                if ($curlError) {
+                    Log::error('Twitter OAuth: cURL error', ['error' => $curlError]);
+                    throw new Exception('cURL error: ' . $curlError);
+                }
+                
+                // Log the actual response
+                Log::info('Twitter OAuth: cURL response received', [
+                    'status' => $responseStatus,
+                    'response_preview' => substr($responseBody, 0, 200),
+                ]);
+                
+                // Parse response
+                $responseData = json_decode($responseBody, true);
+                
+                // Create a mock response object for compatibility
+                $guzzleResponse = new class($responseStatus, $responseBody, $responseData) {
+                    private $status;
+                    private $body;
+                    private $data;
+                    public function __construct($status, $body, $data) {
+                        $this->status = $status;
+                        $this->body = $body;
+                        $this->data = $data;
+                    }
+                    public function getStatusCode() { return $this->status; }
+                    public function getBody() { 
+                        return new class($this->body) {
+                            private $content;
+                            public function __construct($content) { $this->content = $content; }
+                            public function getContents() { return $this->content; }
+                        };
+                    }
+                    public function getHeaders() { return []; }
+                };
+                
+                $responseStatus = $guzzleResponse->getStatusCode();
+                $responseBody = $guzzleResponse->getBody()->getContents();
+                $responseHeaders = []; // cURL doesn't provide headers easily, but we don't need them
+                $responseData = $responseData; // Already parsed above
+            } catch (Exception $e) {
+                // Log the error
+                Log::error('Twitter OAuth: cURL request exception', [
+                    'exception' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
+                
+                // Throw exception
+                throw $e;
+            }
+            
+            // Check if response is HTML (error page) - this shouldn't happen for API calls
+            $contentType = is_array($responseHeaders['Content-Type'] ?? null) 
+                ? ($responseHeaders['Content-Type'][0] ?? '') 
+                : (is_array($responseHeaders['content-type'] ?? null) 
+                    ? ($responseHeaders['content-type'][0] ?? '') 
+                    : ($responseHeaders['content-type'] ?? ''));
+            
+            $isHtml = stripos($contentType, 'text/html') !== false || 
+                      stripos($responseBody, '<!DOCTYPE') !== false ||
+                      stripos($responseBody, '<html') !== false;
+            
+            if ($isHtml) {
+                // Extract error message from HTML if possible
+                $errorMessage = 'Twitter API returned an HTML error page instead of JSON. ';
+                if (preg_match('/<title>(.*?)<\/title>/is', $responseBody, $matches)) {
+                    $errorMessage .= 'Page title: ' . strip_tags($matches[1]) . '. ';
+                }
+                // Try to extract error message from common error page patterns
+                if (preg_match('/<h[1-6][^>]*>(.*?)<\/h[1-6]>/is', $responseBody, $matches)) {
+                    $errorMessage .= 'Error: ' . strip_tags($matches[1]) . '. ';
+                }
+                $errorMessage .= 'Please verify your Twitter app credentials, callback URL, and that your app has OAuth 2.0 enabled.';
+                
+                Log::error('Twitter OAuth: Received HTML error page', [
+                    'status' => $responseStatus,
+                    'content_type' => $contentType,
+                    'url' => $tokenUrl,
+                    'body_preview' => substr($responseBody, 0, 1000),
+                    'redirect_uri' => $redirectUri,
+                ]);
+                
+                throw new Exception($errorMessage);
+            }
 
-            if ($response->failed()) {
-                throw new Exception('Failed to get access token: ' . $response->body());
+            Log::info('Twitter OAuth token exchange response', [
+                'status' => $responseStatus,
+                'successful' => $responseStatus >= 200 && $responseStatus < 300,
+                'body_length' => strlen($responseBody),
+                'body_preview' => substr($responseBody, 0, 500),
+                'content_type' => $contentType,
+                'json_data' => $responseData,
+            ]);
+
+            if ($responseStatus < 200 || $responseStatus >= 300) {
+                Log::error('Twitter OAuth token exchange failed', [
+                    'status' => $responseStatus,
+                    'response' => $responseBody,
+                    'json_response' => $responseData,
+                ]);
+                throw new Exception('Failed to get access token: ' . $responseBody);
+            }
+
+            // Validate response structure
+            if ($responseData === null || !is_array($responseData)) {
+                Log::error('Twitter OAuth: Response is not valid JSON', [
+                    'status' => $responseStatus,
+                    'response_body' => $responseBody,
+                    'json_decode_result' => $responseData,
+                ]);
+                throw new Exception('Invalid token response: Response is not valid JSON. Body: ' . substr($responseBody, 0, 200));
+            }
+
+            if (!isset($responseData['access_token'])) {
+                Log::error('Twitter OAuth: Invalid token response structure', [
+                    'status' => $responseStatus,
+                    'response_body' => $responseBody,
+                    'response_data' => $responseData,
+                    'has_access_token' => isset($responseData['access_token']),
+                    'response_keys' => is_array($responseData) ? array_keys($responseData) : 'not_array',
+                ]);
+                throw new Exception('Invalid token response: missing access_token field. Response: ' . substr($responseBody, 0, 200));
             }
 
             // Clear code verifier from session
             session()->forget('twitter_code_verifier');
 
-            return $response->json();
+            Log::info('Twitter OAuth: Token exchange successful', [
+                'has_access_token' => true,
+                'has_refresh_token' => isset($responseData['refresh_token']),
+            ]);
+
+            return $responseData;
         } catch (Exception $e) {
-            Log::error('Twitter OAuth error: ' . $e->getMessage());
+            Log::error('Twitter OAuth error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
             throw $e;
         }
     }
@@ -93,19 +321,35 @@ class TwitterService
     public function getUserProfile($accessToken)
     {
         try {
-            $response = Http::withHeaders([
+            $response = Http::timeout(30)->withHeaders([
                 'Authorization' => "Bearer {$accessToken}",
             ])->get("{$this->baseUrl}/users/me", [
                 'user.fields' => 'id,name,username,profile_image_url',
             ]);
 
             if ($response->failed()) {
-                throw new Exception('Failed to get user profile: ' . $response->body());
+                $errorBody = $response->body();
+                Log::error('Twitter get profile failed', [
+                    'status' => $response->status(),
+                    'response' => $errorBody,
+                ]);
+                throw new Exception('Failed to get user profile: ' . $errorBody);
             }
 
-            return $response->json()['data'] ?? null;
+            $responseData = $response->json();
+            
+            if (!isset($responseData['data'])) {
+                Log::error('Twitter profile response missing data', [
+                    'response' => $responseData,
+                ]);
+                throw new Exception('Invalid profile response: missing data field');
+            }
+
+            return $responseData['data'];
         } catch (Exception $e) {
-            Log::error('Twitter get profile error: ' . $e->getMessage());
+            Log::error('Twitter get profile error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
             throw $e;
         }
     }
@@ -207,12 +451,23 @@ class TwitterService
     public function refreshAccessToken($refreshToken)
     {
         try {
-            $response = Http::asForm()
-                ->withBasicAuth(
-                    config('socialmedia.twitter.client_id'),
-                    config('socialmedia.twitter.client_secret')
-                )
-                ->post("{$this->authUrl}/token", [
+            $clientId = config('socialmedia.twitter.client_id');
+            $clientSecret = config('socialmedia.twitter.client_secret');
+            
+            if (empty($clientId) || empty($clientSecret)) {
+                throw new Exception('Twitter client credentials are not configured.');
+            }
+            
+            // Manually create Basic Auth header
+            $credentials = base64_encode($clientId . ':' . $clientSecret);
+            
+            $response = Http::timeout(30)
+                ->withHeaders([
+                    'Authorization' => 'Basic ' . $credentials,
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                ])
+                ->asForm()
+                ->post("https://api.twitter.com/2/oauth2/token", [
                     'refresh_token' => $refreshToken,
                     'grant_type' => 'refresh_token',
                 ]);
@@ -257,6 +512,13 @@ class TwitterService
         }
     }
 }
+
+
+
+
+
+
+
 
 
 

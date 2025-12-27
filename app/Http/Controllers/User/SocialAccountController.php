@@ -10,6 +10,7 @@ use App\Services\SocialMedia\InstagramService;
 use App\Services\SocialMedia\TwitterService;
 use App\Services\SocialMedia\TikTokService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
@@ -191,7 +192,14 @@ class SocialAccountController extends Controller
         $state = bin2hex(random_bytes(16));
         $organizationId = session()->get('current_organization');
         $isPopup = request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest';
-        $forceReauth = request()->has('reconnect') || request()->has('force');
+        
+        // Force re-auth if explicitly requested OR if organization has no existing accounts for this platform
+        // This allows users to select which account to connect when connecting to a new organization
+        $hasExistingAccounts = SocialAccount::where('organization_id', $organizationId)
+            ->where('platform', 'facebook')
+            ->whereNull('deleted_at')
+            ->exists();
+        $forceReauth = request()->has('reconnect') || request()->has('force') || !$hasExistingAccounts;
         
         session(['oauth_state' => $state]);
         session(['oauth_organization_id' => $organizationId]);
@@ -202,11 +210,9 @@ class SocialAccountController extends Controller
             'organization_id' => $organizationId,
             'is_popup' => $isPopup,
             'force_reauth' => $forceReauth,
+            'has_existing_accounts' => $hasExistingAccounts,
             'state' => $state,
             'session_id' => session()->getId(),
-            'has_existing_accounts' => SocialAccount::where('organization_id', $organizationId)
-                ->where('platform', 'facebook')
-                ->count()
         ]);
 
         return redirect($this->facebookService->getAuthorizationUrl($state, $forceReauth));
@@ -743,10 +749,24 @@ class SocialAccountController extends Controller
     public function redirectToLinkedIn()
     {
         $state = bin2hex(random_bytes(16));
+        $organizationId = session()->get('current_organization');
+        $isPopup = request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest';
+        
+        // Force re-auth if organization has no existing accounts for this platform
+        // Note: LinkedIn doesn't support forcing account selection via OAuth parameters,
+        // but forcing re-auth ensures a fresh authorization flow
+        $hasExistingAccounts = SocialAccount::where('organization_id', $organizationId)
+            ->where('platform', 'linkedin')
+            ->whereNull('deleted_at')
+            ->exists();
+        $forceReauth = request()->has('reconnect') || request()->has('force') || !$hasExistingAccounts;
+        
         session(['oauth_state' => $state]);
-        session(['oauth_organization_id' => session()->get('current_organization')]);
-        session(['oauth_popup' => request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest']);
+        session(['oauth_organization_id' => $organizationId]);
+        session(['oauth_popup' => $isPopup]);
 
+        // LinkedIn doesn't support force re-auth parameter, but we can add prompt=consent if needed
+        // For now, just redirect normally - users will need to log out of LinkedIn to switch accounts
         return redirect($this->linkedinService->getAuthorizationUrl($state));
     }
 
@@ -929,15 +949,30 @@ class SocialAccountController extends Controller
 
     /**
      * Redirect to Instagram OAuth
+     * Note: Instagram uses Facebook's OAuth system, so users will see Facebook's login dialog.
+     * This is expected behavior - the callback URL and scopes ensure it's for Instagram.
      */
     public function redirectToInstagram()
     {
         $state = bin2hex(random_bytes(16));
+        $organizationId = session()->get('current_organization');
+        $isPopup = request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest';
+        
+        // Force re-auth if organization has no existing accounts OR if explicitly requested
+        // Instagram uses Facebook OAuth, so forcing re-auth allows account selection
+        $hasExistingAccounts = SocialAccount::where('organization_id', $organizationId)
+            ->where('platform', 'instagram')
+            ->whereNull('deleted_at')
+            ->exists();
+        $forceReauth = request()->has('reconnect') || request()->has('force') || !$hasExistingAccounts;
+        
         session(['oauth_state' => $state]);
-        session(['oauth_organization_id' => session()->get('current_organization')]);
-        session(['oauth_popup' => request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest']);
+        session(['oauth_organization_id' => $organizationId]);
+        session(['oauth_popup' => $isPopup]);
 
-        return redirect($this->instagramService->getAuthorizationUrl($state));
+        // Force re-authorization for Instagram to ensure all permissions (including pages_show_list) are granted
+        // Instagram will use its own callback URL (/auth/instagram/callback) and Instagram-specific scopes
+        return redirect($this->instagramService->getAuthorizationUrl($state, $forceReauth));
     }
 
     /**
@@ -946,6 +981,14 @@ class SocialAccountController extends Controller
     public function handleInstagramCallback(Request $request)
     {
         try {
+            Log::info('Instagram OAuth callback received', [
+                'has_code' => $request->has('code'),
+                'has_error' => $request->has('error'),
+                'state' => $request->state,
+                'session_state' => session('oauth_state'),
+                'oauth_popup' => session('oauth_popup'),
+            ]);
+
             // Verify state
             if ($request->state !== session('oauth_state')) {
                 throw new \Exception('Invalid state parameter');
@@ -963,10 +1006,89 @@ class SocialAccountController extends Controller
             $longLivedTokenData = $this->instagramService->getLongLivedToken($shortLivedToken);
             $longLivedToken = $longLivedTokenData['access_token'];
 
-            // Get user's Instagram accounts
+            // Try to get Instagram accounts using the user token
             $accounts = $this->instagramService->getInstagramAccounts($longLivedToken);
+            
+            // If no accounts found, try using existing Facebook page connections
+            if (empty($accounts)) {
+                $organizationId = session('oauth_organization_id');
+                $existingFacebookAccounts = SocialAccount::where('organization_id', $organizationId)
+                    ->where('platform', 'facebook')
+                    ->where('is_active', true)
+                    ->get();
+                
+                Log::info('Instagram: No accounts found via user token, trying existing Facebook pages', [
+                    'facebook_accounts_count' => $existingFacebookAccounts->count(),
+                ]);
+                
+                // Try to get Instagram accounts from existing Facebook page tokens
+                foreach ($existingFacebookAccounts as $fbAccount) {
+                    $pageToken = $fbAccount->access_token;
+                    $pageId = $fbAccount->platform_user_id;
+                    
+                    try {
+                        // Check if this page has an Instagram account
+                        $igResponse = Http::get("https://graph.facebook.com/v18.0/{$pageId}", [
+                            'fields' => 'instagram_business_account{id,username}',
+                            'access_token' => $pageToken,
+                        ]);
+                        
+                        if ($igResponse->successful()) {
+                            $igData = $igResponse->json();
+                            
+                            if (isset($igData['instagram_business_account'])) {
+                                $igBusinessAccount = $igData['instagram_business_account'];
+                                $igAccountId = is_array($igBusinessAccount) ? ($igBusinessAccount['id'] ?? null) : $igBusinessAccount;
+                                
+                                if ($igAccountId) {
+                                    // Get Instagram account details
+                                    $detailsResponse = Http::get("https://graph.facebook.com/v18.0/{$igAccountId}", [
+                                        'fields' => 'id,username,profile_picture_url',
+                                        'access_token' => $pageToken,
+                                    ]);
+                                    
+                                    if ($detailsResponse->successful()) {
+                                        $details = $detailsResponse->json();
+                                        $accounts[] = [
+                                            'id' => $igAccountId,
+                                            'username' => $details['username'] ?? 'Unknown',
+                                            'profile_picture' => $details['profile_picture_url'] ?? null,
+                                            'page_id' => $pageId,
+                                            'page_name' => $fbAccount->platform_username,
+                                            'access_token' => $pageToken,
+                                        ];
+                                        
+                                        Log::info('Instagram: Found Instagram account via existing Facebook page', [
+                                            'ig_account_id' => $igAccountId,
+                                            'page_id' => $pageId,
+                                        ]);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning('Instagram: Error checking Facebook page for Instagram account', [
+                            'page_id' => $pageId,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
+            }
+            
+            Log::info('Instagram accounts retrieved', [
+                'accounts_count' => count($accounts),
+                'oauth_popup' => session('oauth_popup'),
+                'account_ids' => array_column($accounts, 'id'),
+            ]);
 
             if (empty($accounts)) {
+                $isPopup = session('oauth_popup');
+                session()->forget('oauth_popup');
+                
+                if ($isPopup) {
+                    return view('oauth-callback', ['error' => __('No Instagram Business accounts found. Please connect a Facebook page with an Instagram Business account.')]);
+                }
+                
                 return redirect('/social-accounts')->with('status', [
                     'type' => 'error',
                     'message' => __('No Instagram Business accounts found. Please connect a Facebook page with an Instagram Business account.')
@@ -992,10 +1114,15 @@ class SocialAccountController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Instagram OAuth callback error: ' . $e->getMessage());
+            Log::error('Instagram OAuth callback error: ' . $e->getMessage(), [
+                'exception' => get_class($e),
+                'trace' => $e->getTraceAsString(),
+                'oauth_popup' => session('oauth_popup'),
+            ]);
             
             // Check if opened in popup
-            if (session('oauth_popup')) {
+            $isPopup = session('oauth_popup');
+            if ($isPopup) {
                 session()->forget('oauth_popup');
                 return view('oauth-callback', ['error' => __('Failed to connect Instagram: ') . $e->getMessage()]);
             }
@@ -1064,8 +1191,16 @@ class SocialAccountController extends Controller
             $isPopup = session('oauth_popup');
             session()->forget(['instagram_accounts', 'instagram_user_token', 'oauth_state', 'oauth_organization_id', 'oauth_popup']);
 
-            // Check if opened in popup
+            // Check if opened in popup - return JSON response for AJAX/fetch requests
             if ($isPopup) {
+                // If request expects JSON (from fetch/AJAX), return JSON
+                if ($request->expectsJson() || $request->header('Accept') === 'application/json') {
+                    return response()->json([
+                        'success' => true,
+                        'message' => $message
+                    ]);
+                }
+                // Otherwise return the callback view for traditional form submissions
                 return view('oauth-callback', ['status' => ['type' => 'success', 'message' => $message]]);
             }
 
@@ -1090,10 +1225,23 @@ class SocialAccountController extends Controller
     public function redirectToTwitter()
     {
         $state = bin2hex(random_bytes(16));
+        $organizationId = session()->get('current_organization');
+        $isPopup = request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest';
+        
+        // Force re-auth if organization has no existing accounts for this platform
+        // Note: Twitter OAuth 2.0 doesn't support forcing account selection via OAuth parameters
+        $hasExistingAccounts = SocialAccount::where('organization_id', $organizationId)
+            ->where('platform', 'twitter')
+            ->whereNull('deleted_at')
+            ->exists();
+        $forceReauth = request()->has('reconnect') || request()->has('force') || !$hasExistingAccounts;
+        
         session(['oauth_state' => $state]);
-        session(['oauth_organization_id' => session()->get('current_organization')]);
-        session(['oauth_popup' => request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest']);
+        session(['oauth_organization_id' => $organizationId]);
+        session(['oauth_popup' => $isPopup]);
 
+        // Twitter doesn't support force re-auth parameter, but we can still redirect
+        // Users will need to log out of Twitter to switch accounts
         return redirect($this->twitterService->getAuthorizationUrl($state));
     }
 
@@ -1113,17 +1261,36 @@ class SocialAccountController extends Controller
             }
 
             // Get access token
-            $tokenData = $this->twitterService->getAccessToken($request->code);
+            try {
+                $tokenData = $this->twitterService->getAccessToken($request->code);
+            } catch (\Exception $e) {
+                // Re-throw with more context if it's already a detailed error
+                throw new \Exception($e->getMessage());
+            }
+            
+            if (!$tokenData || !isset($tokenData['access_token'])) {
+                Log::error('Twitter OAuth: Token data missing access_token', [
+                    'token_data_keys' => $tokenData ? array_keys($tokenData) : 'null',
+                    'token_data' => $tokenData,
+                ]);
+                throw new \Exception('Invalid token response from Twitter: access_token not found in response');
+            }
+            
             $accessToken = $tokenData['access_token'];
             $refreshToken = $tokenData['refresh_token'] ?? null;
             $expiresIn = $tokenData['expires_in'] ?? 7200; // Default 2 hours
 
             // Get user profile
             $profile = $this->twitterService->getUserProfile($accessToken);
+            
+            if (!$profile || !is_array($profile)) {
+                throw new \Exception('Failed to get Twitter profile: Invalid response');
+            }
+            
             $userId = $profile['id'] ?? null;
 
             if (!$userId) {
-                throw new \Exception('Failed to get Twitter profile');
+                throw new \Exception('Failed to get Twitter user ID from profile');
             }
 
             $organizationId = session('oauth_organization_id');
@@ -1176,7 +1343,11 @@ class SocialAccountController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Twitter OAuth callback error: ' . $e->getMessage());
+            Log::error('Twitter OAuth callback error: ' . $e->getMessage(), [
+                'exception' => get_class($e),
+                'trace' => $e->getTraceAsString(),
+                'oauth_popup' => session('oauth_popup'),
+            ]);
             
             // Check if opened in popup
             if (session('oauth_popup')) {
@@ -1196,12 +1367,39 @@ class SocialAccountController extends Controller
      */
     public function redirectToTikTok()
     {
-        $state = bin2hex(random_bytes(16));
-        session(['oauth_state' => $state]);
-        session(['oauth_organization_id' => session()->get('current_organization')]);
-        session(['oauth_popup' => request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest']);
+        try {
+            $state = bin2hex(random_bytes(16));
+            $organizationId = session()->get('current_organization');
+            $isPopup = request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest';
+            
+            // Force re-auth if organization has no existing accounts for this platform
+            // Note: TikTok doesn't support forcing account selection via OAuth parameters
+            $hasExistingAccounts = SocialAccount::where('organization_id', $organizationId)
+                ->where('platform', 'tiktok')
+                ->whereNull('deleted_at')
+                ->exists();
+            $forceReauth = request()->has('reconnect') || request()->has('force') || !$hasExistingAccounts;
+            
+            session(['oauth_state' => $state]);
+            session(['oauth_organization_id' => $organizationId]);
+            session(['oauth_popup' => $isPopup]);
 
-        return redirect($this->tiktokService->getAuthorizationUrl($state));
+            $authUrl = $this->tiktokService->getAuthorizationUrl($state);
+            return redirect($authUrl);
+        } catch (\Exception $e) {
+            Log::error('TikTok redirect error: ' . $e->getMessage());
+            
+            // Check if opened in popup
+            if (session('oauth_popup')) {
+                session()->forget('oauth_popup');
+                return view('oauth-callback', ['error' => __('Failed to connect TikTok: ') . $e->getMessage()]);
+            }
+            
+            return redirect('/social-accounts')->with('status', [
+                'type' => 'error',
+                'message' => __('Failed to connect TikTok: ') . $e->getMessage()
+            ]);
+        }
     }
 
     /**

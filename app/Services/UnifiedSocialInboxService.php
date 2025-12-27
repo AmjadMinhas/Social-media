@@ -56,13 +56,44 @@ class UnifiedSocialInboxService
 
         if ($facebookAccount) {
             try {
+                Log::info('UnifiedSocialInbox: Starting Facebook sync', [
+                    'account_id' => $facebookAccount->id,
+                    'page_id' => $facebookAccount->platform_data['page_id'] ?? null,
+                    'organization_id' => $organizationId
+                ]);
+                
                 $messages = $this->facebookService->fetchMessages($facebookAccount);
+                
+                Log::info('UnifiedSocialInbox: Facebook messages fetched', [
+                    'messages_count' => count($messages)
+                ]);
+                
                 $processed = $this->facebookService->processMessages($organization, $messages);
+                
+                Log::info('UnifiedSocialInbox: Facebook messages processed', [
+                    'processed_count' => $processed
+                ]);
+                
                 $results['facebook'] = $processed;
                 $results['total'] += $processed;
             } catch (\Exception $e) {
-                Log::error('Facebook sync error: ' . $e->getMessage());
+                Log::error('Facebook sync error: ' . $e->getMessage(), [
+                    'account_id' => $facebookAccount->id ?? null,
+                    'organization_id' => $organizationId,
+                    'trace' => $e->getTraceAsString()
+                ]);
             }
+        } else {
+            Log::info('UnifiedSocialInbox: No active Facebook account found', [
+                'organization_id' => $organizationId,
+                'total_facebook_accounts' => SocialAccount::where('organization_id', $organizationId)
+                    ->where('platform', 'facebook')
+                    ->count(),
+                'active_facebook_accounts' => SocialAccount::where('organization_id', $organizationId)
+                    ->where('platform', 'facebook')
+                    ->where('is_active', true)
+                    ->count()
+            ]);
         }
 
         // Sync Instagram Direct Messages
@@ -227,6 +258,21 @@ class UnifiedSocialInboxService
         try {
             $recipientId = $this->getRecipientId($contact, $platform);
             
+            if (!$recipientId) {
+                Log::error("UnifiedSocialInbox: No recipient ID found for contact", [
+                    'contact_id' => $contactId,
+                    'platform' => $platform,
+                    'contact_phone' => $contact->phone
+                ]);
+                return ['success' => false, 'message' => 'Could not find recipient ID. Please sync messages again to update contact information.'];
+            }
+            
+            Log::info("UnifiedSocialInbox: Sending message", [
+                'platform' => $platform,
+                'recipient_id' => $recipientId,
+                'contact_id' => $contactId
+            ]);
+            
             switch ($platform) {
                 case 'facebook':
                     $result = $this->facebookService->sendMessage($account, $recipientId, $message);
@@ -300,7 +346,8 @@ class UnifiedSocialInboxService
 
         if ($lastChat && $lastChat->platform_data) {
             $platformData = json_decode($lastChat->platform_data, true);
-            return $platformData['sender_id'] ?? $platformData['from']['id'] ?? null;
+            // Prefer PSID over sender_id for sending messages
+            return $platformData['psid'] ?? $platformData['sender_id'] ?? $platformData['from']['id'] ?? null;
         }
 
         return null;

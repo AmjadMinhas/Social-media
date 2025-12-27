@@ -86,8 +86,24 @@
                         <div v-if="form.errors.platforms" class="text-red-500 text-sm mt-1">{{ form.errors.platforms }}</div>
                     </div>
 
-                    <!-- Scheduled Date & Time -->
+                    <!-- Publish Type -->
                     <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                            {{ $t('Publish Type') }} <span class="text-red-500">*</span>
+                        </label>
+                        <select 
+                            v-model="form.publish_type" 
+                            class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary focus:border-primary"
+                            required
+                        >
+                            <option value="scheduled">{{ $t('Schedule for later') }}</option>
+                            <option value="now">{{ $t('Publish now') }}</option>
+                        </select>
+                        <div v-if="form.errors.publish_type" class="text-red-500 text-sm mt-1">{{ form.errors.publish_type }}</div>
+                    </div>
+
+                    <!-- Scheduled Date & Time (only show if scheduled) -->
+                    <div v-if="form.publish_type === 'scheduled'">
                         <label class="block text-sm font-medium text-gray-700 mb-2">
                             {{ $t('Schedule Date & Time') }} <span class="text-red-500">*</span>
                         </label>
@@ -102,18 +118,56 @@
                         <div v-if="form.errors.scheduled_at" class="text-red-500 text-sm mt-1">{{ form.errors.scheduled_at }}</div>
                     </div>
 
-                    <!-- Media Upload (placeholder for future) -->
+                    <!-- Media Upload -->
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-2">
                             {{ $t('Media (Optional)') }}
                         </label>
-                        <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                            </svg>
-                            <p class="mt-2 text-sm text-gray-600">{{ $t('Media upload will be available soon') }}</p>
-                            <p class="text-xs text-gray-500">{{ $t('Images, Videos, GIFs') }}</p>
+                        <div class="border-2 border-dashed border-gray-300 rounded-lg p-6">
+                            <input 
+                                type="file" 
+                                multiple 
+                                accept="image/*,video/mp4,video/quicktime,video/x-msvideo"
+                                @change="handleMediaUpload"
+                                class="hidden"
+                                ref="mediaInput"
+                                id="media-upload"
+                            />
+                            <div class="text-center">
+                                <label for="media-upload" class="cursor-pointer inline-block">
+                                    <div @click.stop="() => mediaInput?.click()" class="cursor-pointer">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                        </svg>
+                                    <p class="mt-2 text-sm text-gray-600">{{ $t('Click to upload media') }}</p>
+                                    <p class="text-xs text-gray-500">{{ $t('Images (JPEG, PNG, GIF, WebP) or Videos (MP4, MOV, AVI)') }}</p>
+                                    <p class="text-xs text-gray-400 mt-1">{{ $t('Max: 10MB for images, 100MB for videos') }}</p>
+                                    </div>
+                                </label>
+                            </div>
+                            
+                            <!-- Media Preview -->
+                            <div v-if="mediaPreview.length > 0" class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div v-for="(preview, index) in mediaPreview" :key="index" class="relative group">
+                                    <div class="aspect-square rounded-lg overflow-hidden border border-gray-300">
+                                        <img v-if="preview.file.type.startsWith('image/')" :src="preview.url" :alt="preview.name" class="w-full h-full object-cover">
+                                        <video v-else :src="preview.url" class="w-full h-full object-cover" controls></video>
+                                    </div>
+                                    <button 
+                                        @click="removeMedia(index)"
+                                        type="button"
+                                        class="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                                        </svg>
+                                    </button>
+                                    <p class="text-xs text-gray-500 mt-1 truncate">{{ preview.name }}</p>
+                                </div>
+                            </div>
                         </div>
+                        <div v-if="form.errors.media" class="text-red-500 text-sm mt-1">{{ form.errors.media }}</div>
                     </div>
 
                     <!-- Preview Section -->
@@ -145,13 +199,17 @@
                             {{ $t('Cancel') }}
                         </Link>
                         <button 
-                            type="submit" 
+                            type="button"
+                            @click="submit"
                             :disabled="form.processing || form.platforms.length === 0"
                             class="px-4 py-2 bg-primary text-white rounded-md text-sm font-medium hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <span v-if="form.processing">{{ $t('Scheduling...') }}</span>
                             <span v-else>{{ $t('Schedule Post') }}</span>
                         </button>
+                        <div v-if="form.processing" class="text-sm text-gray-500 mt-2">
+                            Processing... Please wait
+                        </div>
                     </div>
                 </form>
             </div>
@@ -161,9 +219,12 @@
 
 <script setup>
     import AppLayout from "./../Layout/App.vue";
-    import { Link, useForm } from "@inertiajs/vue3";
+    import { Link, useForm, usePage, router } from "@inertiajs/vue3";
     import { ref, computed } from 'vue';
     import { trans } from 'laravel-vue-i18n';
+
+    const mediaInput = ref(null);
+    const page = usePage();
 
     const availablePlatforms = ref([
         {
@@ -197,9 +258,15 @@
         title: '',
         content: '',
         platforms: [],
+        publish_type: 'scheduled', // 'now', 'scheduled', or 'time_range'
         scheduled_at: '',
+        scheduled_from: '',
+        scheduled_to: '',
         media: []
     });
+
+    const selectedMediaFiles = ref([]);
+    const mediaPreview = ref([]);
 
     const minDateTime = computed(() => {
         const now = new Date();
@@ -221,12 +288,302 @@
         return platform ? platform.name : platformId;
     };
 
-    const submit = () => {
+    const handleMediaUpload = (event) => {
+        console.log('Media upload triggered', event);
+        const files = Array.from(event.target.files || []);
+        console.log('Files selected:', files.length);
+        
+        if (files.length === 0) {
+            console.log('No files selected');
+            return;
+        }
+        
+        files.forEach(file => {
+            console.log('Processing file:', file.name, file.type, file.size);
+            
+            // Validate file type
+            const validTypes = [
+                'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+                'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/avi'
+            ];
+            const validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.mov', '.avi'];
+            
+            const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
+            const isValidType = validTypes.includes(file.type) || validExtensions.includes(fileExtension);
+            
+            if (!isValidType) {
+                alert(`${file.name}: Invalid file type. Please upload images (JPEG, PNG, GIF, WebP) or videos (MP4, MOV, AVI)`);
+                return;
+            }
+            
+            // Validate file size (max 10MB for images, 100MB for videos - Facebook allows up to 1GB but we'll limit to 100MB)
+            const maxSize = file.type.startsWith('video/') || fileExtension === '.mp4' || fileExtension === '.mov' || fileExtension === '.avi' 
+                ? 100 * 1024 * 1024 
+                : 10 * 1024 * 1024;
+            if (file.size > maxSize) {
+                alert(`${file.name}: File too large. Max size: ${file.type.startsWith('video/') ? '50MB' : '10MB'}`);
+                return;
+            }
+            
+            selectedMediaFiles.value.push(file);
+            console.log('File added to selectedMediaFiles:', selectedMediaFiles.value.length);
+            
+            // Create preview
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                mediaPreview.value.push({
+                    file: file,
+                    url: e.target.result,
+                    name: file.name
+                });
+                console.log('Preview added:', mediaPreview.value.length);
+            };
+            reader.onerror = (error) => {
+                console.error('Error reading file:', error);
+            };
+            reader.readAsDataURL(file);
+        });
+        
+        // Reset input to allow selecting same file again
+        if (event.target) {
+            event.target.value = '';
+        }
+    };
+
+    const removeMedia = (index) => {
+        selectedMediaFiles.value.splice(index, 1);
+        mediaPreview.value.splice(index, 1);
+    };
+
+    const uploadMediaFiles = async () => {
+        if (selectedMediaFiles.value.length === 0) {
+            return [];
+        }
+
+        const uploadedUrls = [];
+        const page = usePage();
+        const csrfToken = page.props.csrf_token || document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+        
+        for (const file of selectedMediaFiles.value) {
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('type', 'post_scheduler');
+
+                const response = await fetch('/post-scheduler/upload-media', {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                        'Accept': 'application/json',
+                    },
+                    credentials: 'same-origin',
+                    body: formData
+                });
+
+                // Check if response is JSON before parsing
+                const contentType = response.headers.get('content-type');
+                const isJson = contentType && contentType.includes('application/json');
+
+                if (response.ok) {
+                    if (isJson) {
+                        const data = await response.json();
+                        if (data.url || data.path) {
+                            uploadedUrls.push(data.url || data.path);
+                        }
+                    } else {
+                        const text = await response.text();
+                        console.error('Non-JSON response received:', text.substring(0, 200));
+                        throw new Error('Server returned non-JSON response');
+                    }
+                } else {
+                    if (isJson) {
+                        const errorData = await response.json();
+                        console.error('Failed to upload:', file.name, errorData);
+                        throw new Error(errorData.message || 'Upload failed');
+                    } else {
+                        const text = await response.text();
+                        console.error('Non-JSON error response:', text.substring(0, 200));
+                        throw new Error(`Upload failed with status ${response.status}`);
+                    }
+                }
+            } catch (error) {
+                console.error('Error uploading file:', file.name, error);
+                // Don't silently fail - throw to stop the process
+                throw error;
+            }
+        }
+
+        return uploadedUrls;
+    };
+
+    const submit = async (e) => {
+        if (e) {
+            e.preventDefault();
+        }
+        
+        console.log('Form submit triggered');
+        console.log('Form data before validation:', {
+            title: form.title,
+            content: form.content,
+            platforms: form.platforms,
+            publish_type: form.publish_type,
+            scheduled_at: form.scheduled_at,
+            media_files_count: selectedMediaFiles.value.length
+        });
+        
+        // Validate required fields
+        if (!form.title || form.title.trim() === '') {
+            alert('Please enter a post title');
+            return;
+        }
+        
+        if (!form.content || form.content.trim() === '') {
+            alert('Please enter post content');
+            return;
+        }
+        
+        // Validate platforms
+        if (form.platforms.length === 0) {
+            alert('Please select at least one platform');
+            return;
+        }
+        
+        // Ensure publish_type is set
+        if (!form.publish_type) {
+            form.publish_type = form.scheduled_at ? 'scheduled' : 'now';
+        }
+
+        // Validate publish_type and scheduled_at
+        if (form.publish_type === 'scheduled' && !form.scheduled_at) {
+            alert('Please select a scheduled date and time');
+            return;
+        }
+        
+        console.log('Form data after validation:', {
+            title: form.title,
+            content: form.content,
+            platforms: form.platforms,
+            publish_type: form.publish_type,
+            scheduled_at: form.scheduled_at,
+        });
+
+        // Upload media files first if any
+        if (selectedMediaFiles.value.length > 0) {
+            console.log('Uploading media files...', selectedMediaFiles.value.length);
+            try {
+                const uploadedUrls = await uploadMediaFiles();
+                console.log('Media uploaded successfully:', uploadedUrls);
+                
+                // Ensure form.media is set as an array
+                if (uploadedUrls && uploadedUrls.length > 0) {
+                    form.media = uploadedUrls;
+                    console.log('Form media set to:', form.media);
+                } else {
+                    console.warn('No media URLs returned from upload');
+                    form.media = [];
+                }
+            } catch (error) {
+                console.error('Error uploading media:', error);
+                alert('Failed to upload some media files. Please try again.');
+                return;
+            }
+        } else {
+            form.media = [];
+            console.log('No media files to upload');
+        }
+        
+        // Final check before submission
+        console.log('Final form.media before submission:', form.media);
+        console.log('Form.media type:', typeof form.media, Array.isArray(form.media));
+
+        // Ensure publish_type is set (default to 'scheduled' if not set)
+        if (!form.publish_type) {
+            form.publish_type = form.scheduled_at ? 'scheduled' : 'now';
+        }
+
+        console.log('Final form data before submission:', {
+            title: form.title,
+            content: form.content,
+            platforms: form.platforms,
+            publish_type: form.publish_type,
+            scheduled_at: form.scheduled_at,
+            media: form.media,
+            media_count: form.media?.length || 0
+        });
+
+        // Debug: Log form state
+        console.log('=== FORM SUBMISSION DEBUG ===');
+        console.log('form.title:', form.title, typeof form.title);
+        console.log('form.content:', form.content, typeof form.content);
+        console.log('form.platforms:', form.platforms, Array.isArray(form.platforms));
+        console.log('form.publish_type:', form.publish_type);
+        console.log('form.data():', form.data());
+        console.log('form object keys:', Object.keys(form));
+        
+        // Validate required fields
+        if (!form.title || String(form.title).trim() === '') {
+            alert('Please enter a post title');
+            return;
+        }
+        
+        if (!form.content || String(form.content).trim() === '') {
+            alert('Please enter post content');
+            return;
+        }
+        
+        if (!form.platforms || !Array.isArray(form.platforms) || form.platforms.length === 0) {
+            alert('Please select at least one platform');
+            return;
+        }
+        
+        // Ensure publish_type is set
+        if (!form.publish_type) {
+            form.publish_type = form.scheduled_at ? 'scheduled' : 'now';
+        }
+        
+        console.log('=== SUBMITTING FORM ===');
+        console.log('Final form.data():', form.data());
+        
+        // Submit form directly
         form.post('/post-scheduler', {
             preserveScroll: true,
-            onSuccess: () => {
-                form.reset();
+            onStart: () => {
+                console.log('Form submission started');
+                console.log('Form data being sent:', form.data());
             },
+            onProgress: (progress) => {
+                console.log('Form submission progress:', progress);
+            },
+            onSuccess: (page) => {
+                console.log('Form submitted successfully!', page);
+                form.reset();
+                selectedMediaFiles.value = [];
+                mediaPreview.value = [];
+            },
+            onError: (errors) => {
+                console.error('Form submission errors:', errors);
+                console.error('Full error object:', JSON.stringify(errors, null, 2));
+                console.error('Form data that was sent:', form.data());
+                
+                let errorMessage = 'Please check the form and try again.';
+                
+                if (errors.platforms) {
+                    errorMessage = 'Please select at least one platform';
+                } else if (errors.scheduled_at) {
+                    errorMessage = 'Please select a valid scheduled date and time';
+                } else if (errors.title) {
+                    errorMessage = errors.title;
+                } else if (errors.content) {
+                    errorMessage = errors.content;
+                } else if (errors.publish_type) {
+                    errorMessage = errors.publish_type;
+                }
+                
+                alert(errorMessage);
+            },
+            onFinish: () => {
+                console.log('Form submission finished');
+            }
         });
     };
 </script>

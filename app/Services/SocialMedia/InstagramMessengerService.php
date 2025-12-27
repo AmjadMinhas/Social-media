@@ -35,18 +35,76 @@ class InstagramMessengerService
             $igAccountId = $account->platform_user_id;
             $accessToken = $account->access_token;
 
-            // Get conversations (threads)
-            $threadsResponse = Http::get("{$this->baseUrl}/{$igAccountId}/conversations", [
+            Log::info('Instagram Messenger: Fetching messages', [
+                'ig_account_id' => $igAccountId,
+                'has_access_token' => !empty($accessToken),
+            ]);
+
+            // Instagram DMs API endpoint - try using the page's inbox instead
+            // Note: Instagram DMs are accessed through the linked Facebook Page's conversations
+            // We need to get the Facebook Page ID first from the account's platform_data
+            
+            $pageId = $account->platform_data['page_id'] ?? null;
+            
+            if (!$pageId) {
+                Log::warning('Instagram Messenger: No Facebook Page ID found in account data', [
+                    'platform_data' => $account->platform_data,
+                ]);
+                // Try to get it from the Instagram account's linked page
+                $igAccountResponse = Http::get("{$this->baseUrl}/{$igAccountId}", [
+                    'fields' => 'connected_facebook_page',
+                    'access_token' => $accessToken,
+                ]);
+                
+                if ($igAccountResponse->successful()) {
+                    $igAccountData = $igAccountResponse->json();
+                    $pageId = $igAccountData['connected_facebook_page']['id'] ?? null;
+                }
+            }
+            
+            if (!$pageId) {
+                Log::error('Instagram Messenger: Cannot find Facebook Page ID for Instagram account');
+                return [];
+            }
+            
+            // Use the Facebook Page's conversations endpoint for Instagram DMs
+            $threadsResponse = Http::get("{$this->baseUrl}/{$pageId}/conversations", [
                 'access_token' => $accessToken,
-                'fields' => 'id,thread_id,updated_time',
+                'fields' => 'id,updated_time,message_count,participants,can_reply',
+                'platform' => 'instagram',  // Filter for Instagram conversations only
                 'limit' => 50,
             ]);
 
             if ($threadsResponse->failed()) {
-                throw new Exception('Failed to fetch conversations: ' . $threadsResponse->body());
+                $errorBody = $threadsResponse->body();
+                $errorData = json_decode($errorBody, true);
+                $errorCode = $errorData['error']['code'] ?? null;
+                $errorMessage = $errorData['error']['message'] ?? 'Unknown error';
+                
+                // Instagram Graph API doesn't support fetching DMs for most apps
+                // Error code 3 means "Application does not have the capability to make this API call"
+                if ($errorCode == 3) {
+                    Log::warning('Instagram Messenger: API capability not available', [
+                        'message' => 'Instagram Direct Messages API requires special permissions/capabilities that are not available for this app. Instagram DMs can only be accessed through Instagram Messaging API which requires separate setup.',
+                        'error_code' => $errorCode,
+                    ]);
+                    return []; // Return empty array instead of throwing error
+                }
+                
+                Log::error('Instagram Messenger: Failed to fetch conversations', [
+                    'status' => $threadsResponse->status(),
+                    'response' => $errorBody,
+                    'ig_account_id' => $igAccountId,
+                    'error_code' => $errorCode,
+                ]);
+                throw new Exception('Failed to fetch conversations: ' . $errorBody);
             }
 
             $threads = $threadsResponse->json()['data'] ?? [];
+            Log::info('Instagram Messenger: Conversations fetched', [
+                'threads_count' => count($threads),
+            ]);
+
             $messages = [];
 
             foreach ($threads as $thread) {
@@ -61,18 +119,35 @@ class InstagramMessengerService
                 if ($messagesResponse->successful()) {
                     $threadMessages = $messagesResponse->json()['messages']['data'] ?? [];
                     
+                    Log::info('Instagram Messenger: Messages in thread', [
+                        'thread_id' => $threadId,
+                        'messages_count' => count($threadMessages),
+                    ]);
+                    
                     foreach ($threadMessages as $message) {
                         $messages[] = [
                             'thread_id' => $threadId,
                             'message' => $message,
                         ];
                     }
+                } else {
+                    Log::warning('Instagram Messenger: Failed to get messages for thread', [
+                        'thread_id' => $threadId,
+                        'status' => $messagesResponse->status(),
+                        'response' => $messagesResponse->body(),
+                    ]);
                 }
             }
 
+            Log::info('Instagram Messenger: Total messages fetched', [
+                'total_messages' => count($messages),
+            ]);
+
             return $messages;
         } catch (Exception $e) {
-            Log::error('Instagram Messenger fetch error: ' . $e->getMessage());
+            Log::error('Instagram Messenger fetch error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
             return [];
         }
     }
@@ -189,6 +264,11 @@ class InstagramMessengerService
         }
     }
 }
+
+
+
+
+
 
 
 

@@ -36,10 +36,19 @@ class PublishScheduledPostJob implements ShouldQueue
     public function handle()
     {
         try {
-            $post = $this->scheduledPost;
+            // Refresh post to get latest data
+            $post = $this->scheduledPost->fresh();
 
-            // Check if post is still scheduled
-            if ($post->status !== 'scheduled') {
+            Log::info('PublishScheduledPostJob: Starting', [
+                'post_id' => $post->id,
+                'post_uuid' => $post->uuid,
+                'current_status' => $post->status,
+                'platforms' => $post->platforms,
+                'publish_type' => $post->publish_type
+            ]);
+
+            // Check if post is still scheduled (allow 'scheduled' or 'publishing' status)
+            if (!in_array($post->status, ['scheduled', 'publishing'])) {
                 Log::info("Post {$post->id} is not scheduled, skipping", ['status' => $post->status]);
                 return;
             }
@@ -54,7 +63,31 @@ class PublishScheduledPostJob implements ShouldQueue
             // Get organization's social accounts
             $organizationId = $post->organization_id;
 
-            foreach ($post->platforms as $platform) {
+            // Ensure platforms is an array
+            $platforms = $post->platforms;
+            if (is_string($platforms)) {
+                $platforms = json_decode($platforms, true);
+            }
+            
+            if (empty($platforms) || !is_array($platforms)) {
+                Log::error('PublishScheduledPostJob: No platforms found', [
+                    'post_id' => $post->id,
+                    'platforms' => $post->platforms
+                ]);
+                $post->update([
+                    'status' => 'failed',
+                    'error_message' => 'No platforms specified'
+                ]);
+                return;
+            }
+
+            Log::info('PublishScheduledPostJob: Processing platforms', [
+                'post_id' => $post->id,
+                'platforms' => $platforms,
+                'organization_id' => $organizationId
+            ]);
+
+            foreach ($platforms as $platform) {
                 try {
                     // Get active social account for this platform
                     $account = SocialAccount::where('organization_id', $organizationId)
@@ -102,6 +135,12 @@ class PublishScheduledPostJob implements ShouldQueue
             }
 
             // Update post status based on results
+            // Ensure platforms is an array for count()
+            $platformsArray = $platforms;
+            if (is_string($platformsArray)) {
+                $platformsArray = json_decode($platformsArray, true) ?: [];
+            }
+            
             if (empty($errors)) {
                 // All platforms succeeded
                 $post->update([
@@ -111,7 +150,7 @@ class PublishScheduledPostJob implements ShouldQueue
                     'error_message' => null,
                 ]);
                 Log::info("Post {$post->id} published successfully to all platforms");
-            } else if (count($errors) === count($post->platforms)) {
+            } else if (count($errors) === count($platformsArray)) {
                 // All platforms failed
                 $post->update([
                     'status' => 'failed',

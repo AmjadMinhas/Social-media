@@ -52,8 +52,9 @@ class ProcessScheduledPosts extends Command
 
                 $this->info("Dispatching job for post ID: {$post->id} (UUID: {$post->uuid})");
                 
-                // Dispatch job to publish the post
-                PublishScheduledPostJob::dispatch($post);
+                // Dispatch job to publish the post (use dispatchSync for immediate execution)
+                // This ensures posts are published even if queue worker is not running
+                PublishScheduledPostJob::dispatchSync($post);
                 
                 $this->info("Job dispatched successfully for post: {$post->title}");
                 

@@ -186,14 +186,14 @@
     }
 
     const getPrevLink = () => {
-        if (!rows.links || rows.links.length === 0) return null;
-        const prevLink = rows.links.find(link => link.label === '&laquo; Previous' || link.label === 'Previous');
+        if (!props.rows?.links || props.rows.links.length === 0) return null;
+        const prevLink = props.rows.links.find(link => link.label === '&laquo; Previous' || link.label === 'Previous');
         return prevLink?.url || null;
     }
 
     const getNextLink = () => {
-        if (!rows.links || rows.links.length === 0) return null;
-        const nextLink = rows.links.find(link => link.label === 'Next &raquo;' || link.label === 'Next');
+        if (!props.rows?.links || props.rows.links.length === 0) return null;
+        const nextLink = props.rows.links.find(link => link.label === 'Next &raquo;' || link.label === 'Next');
         return nextLink?.url || null;
     }
 </script>
@@ -385,7 +385,7 @@
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
-                    <tr v-for="(item, index) in (rows.data || [])" :key="index" class="hover:bg-gray-50">
+                    <tr v-for="(item, index) in (props.rows?.data || [])" :key="index" class="hover:bg-gray-50">
                         <!-- Caption -->
                         <td class="px-6 py-4 whitespace-nowrap">
                             <Link :href="'/post-scheduler/' + item.uuid" class="block">
@@ -460,7 +460,7 @@
                     </tr>
                     
                     <!-- Empty State -->
-                    <tr v-if="!rows.data || rows.data.length === 0">
+                    <tr v-if="!props.rows?.data || props.rows.data.length === 0">
                         <td colspan="6" class="px-6 py-12 text-center">
                             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mx-auto text-gray-400 mb-3">
                                 <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
@@ -479,30 +479,30 @@
         </div>
 
         <!-- Pagination -->
-        <div v-if="rows.data && rows.data.length > 0 && rows.total > rows.per_page" class="px-6 py-4 border-t border-gray-200 bg-gray-50">
+        <div v-if="props.rows?.data && props.rows.data.length > 0 && props.rows.total > props.rows.per_page" class="px-6 py-4 border-t border-gray-200 bg-gray-50">
             <div class="flex items-center justify-between">
                 <div class="text-sm text-gray-700">
                     {{ $t('Showing') }} 
-                    <span class="font-medium">{{ rows.from || (rows.data ? 1 : 0) }}</span>
+                    <span class="font-medium">{{ props.rows.from || (props.rows.data ? 1 : 0) }}</span>
                     {{ $t('to') }} 
-                    <span class="font-medium">{{ rows.to || (rows.data ? rows.data.length : 0) }}</span>
+                    <span class="font-medium">{{ props.rows.to || (props.rows.data ? props.rows.data.length : 0) }}</span>
                     {{ $t('of') }} 
-                    <span class="font-medium">{{ rows.total || (rows.data ? rows.data.length : 0) }}</span>
+                    <span class="font-medium">{{ props.rows.total || (props.rows.data ? props.rows.data.length : 0) }}</span>
                     {{ $t('result(s)') }}
                 </div>
                 <div class="flex items-center gap-2">
                     <button 
-                        v-if="rows.links && rows.links.length > 0 && getPrevLink()"
+                        v-if="props.rows?.links && props.rows.links.length > 0 && getPrevLink()"
                         @click="router.visit(getPrevLink())"
                         class="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50"
                     >
                         {{ $t('Previous') }}
                     </button>
-                    <span v-if="rows.current_page" class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md">
-                        {{ rows.current_page }}
+                    <span v-if="props.rows?.current_page" class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md">
+                        {{ props.rows.current_page }}
                     </span>
                     <button 
-                        v-if="rows.links && rows.links.length > 0 && getNextLink()"
+                        v-if="props.rows?.links && props.rows.links.length > 0 && getNextLink()"
                         @click="router.visit(getNextLink())"
                         class="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50"
                     >

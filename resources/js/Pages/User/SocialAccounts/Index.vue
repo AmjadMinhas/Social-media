@@ -12,14 +12,27 @@ const props = defineProps({
     accounts: Array,
 });
 
-const { isOpenAlert, openAlert, confirmAlert } = useAlertModal();
+const { isOpenAlert, openAlert, confirmAlert, alertMessage } = useAlertModal();
 
 const isModalOpen = ref(false);
 const selectedPlatform = ref(null);
 const selectedPlatformName = ref('');
 
 const disconnectAccount = (uuid) => {
-    router.delete(`/social-accounts/${uuid}`);
+    router.delete(`/social-accounts/${uuid}`, {
+        preserveScroll: false,
+        onSuccess: () => {
+            // Account disconnected successfully - reload to update the list
+            router.reload({ 
+                only: ['accounts'],
+                preserveState: false,
+                preserveScroll: false
+            });
+        },
+        onError: (errors) => {
+            console.error('Failed to disconnect account:', errors);
+        }
+    });
 };
 
 const verifyAccount = (uuid) => {
@@ -263,7 +276,15 @@ const formatDate = (dateString) => {
             </div>
         </div>
 
-        <AlertModal :isOpen="isOpenAlert" @confirm="confirmAlert" />
+        <AlertModal 
+            :modelValue="isOpenAlert" 
+            :label="$t('Disconnect Account')"
+            :description="alertMessage"
+            :confirm-button-text="$t('Disconnect')"
+            confirm-button-class="bg-red-600 hover:bg-red-500"
+            icon="warning"
+            @confirm="confirmAlert"
+        />
         <SocialAccountModal 
             :isOpen="isModalOpen" 
             :platform="selectedPlatform"

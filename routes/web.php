@@ -83,7 +83,7 @@ Route::middleware(['guest', 'redirectIfAuthenticated:user,admin'])->group(functi
     Route::post('/tfa', [App\Http\Controllers\AuthController::class, 'tfaVerify']);
     Route::get('/social-login/{type?}', [App\Http\Controllers\AuthController::class, 'socialLogin']);
     Route::get('/google/callback', [App\Http\Controllers\AuthController::class, 'googleCallback'])->name('google.callback');
-    Route::get('/facebook/callback', [App\Http\Controllers\AuthController::class, 'handleFacebookCallback']);
+    // Route::get('/facebook/callback', [App\Http\Controllers\AuthController::class, 'handleFacebookCallback']);
     Route::get('/signup', [App\Http\Controllers\AuthController::class, 'showRegistrationForm']);
     Route::post('/signup', [App\Http\Controllers\AuthController::class, 'handleRegistration']);
     Route::get('/forgot-password', [App\Http\Controllers\AuthController::class, 'showForgotForm']);
@@ -197,6 +197,7 @@ Route::middleware(['auth:user'])->group(function () {
                 Route::delete('/automation/basic/{uuid}', [App\Http\Controllers\User\CannedReplyController::class, 'delete'])->name('cannedReply.destroy');
 
                 Route::get('/post-scheduler/{uuid?}', [App\Http\Controllers\User\PostSchedulerController::class, 'index'])->name('post-scheduler');
+                Route::post('/post-scheduler/upload-media', [App\Http\Controllers\User\PostSchedulerController::class, 'uploadMedia']);
                 Route::post('/post-scheduler', [App\Http\Controllers\User\PostSchedulerController::class, 'store']);
                 Route::post('/post-scheduler/{uuid}', [App\Http\Controllers\User\PostSchedulerController::class, 'update']);
                 Route::delete('/post-scheduler/{uuid}', [App\Http\Controllers\User\PostSchedulerController::class, 'delete']);
@@ -232,6 +233,9 @@ Route::middleware(['auth:user'])->group(function () {
                     Route::post('/settings/whatsapp/devices', [App\Http\Controllers\User\SettingController::class, 'addWhatsAppDeviceSession']);
                     Route::delete('/settings/whatsapp/devices/{deviceId}', [App\Http\Controllers\User\SettingController::class, 'removeWhatsAppDeviceSession']);
                     Route::post('/settings/whatsapp/concurrent-mode/toggle', [App\Http\Controllers\User\SettingController::class, 'toggleConcurrentMode']);
+                    Route::get('/settings/whatsapp/coexistence/status', [App\Http\Controllers\User\SettingController::class, 'getCoexistenceStatus']);
+                    Route::get('/settings/whatsapp/coexistence/check', [App\Http\Controllers\User\SettingController::class, 'checkCoexistenceSupport']);
+                    Route::post('/settings/whatsapp/coexistence/enable', [App\Http\Controllers\User\SettingController::class, 'enableCoexistence']);
                     Route::match(['get', 'post'], '/settings/contacts', [App\Http\Controllers\User\SettingController::class, 'contacts']);
                     Route::match(['get', 'post'], '/settings/tickets', [App\Http\Controllers\User\SettingController::class, 'tickets']);
                     Route::match(['get', 'post'], '/settings/automation', [App\Http\Controllers\User\SettingController::class, 'automation']);

@@ -4,19 +4,61 @@
             <div class="flex justify-center items-center mb-8">
                 <div class="md:w-[60em]">
                     <div v-if="!settings?.whatsapp" class="bg-white border border-slate-200 rounded-lg py-2 text-sm mb-4">
-                        <div class="flex items-center px-4 pt-2 pb-4">
-                            <div class="w-[70%]">
-                                <h2 class="text-[17px]">{{ $t('Setup Whatsapp Account') }}</h2>
-                                <span class="flex items-center mt-1">
-                                    {{ $t('Setup your integration to be able to receive and send messages via Whatsapp.') }}
-                                </span>
+                        <div class="px-4 pt-2 pb-4">
+                            <h2 class="text-[17px] mb-2">{{ $t('Setup Whatsapp Account') }}</h2>
+                            <p class="text-sm text-gray-600 mb-4">
+                                {{ $t('Setup your integration to be able to receive and send messages via Whatsapp.') }}
+                            </p>
+                            
+                            <!-- Facebook Login (Embedded Signup) - Only if credentials are configured -->
+                            <div v-if="embeddedSignupActive == 1 && props.appId && props.configId" class="mb-4">
+                                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                    <div class="flex items-start space-x-3">
+                                        <div class="flex-shrink-0">
+                                            <svg class="w-6 h-6 text-blue-600" fill="currentColor" viewBox="0 0 24 24">
+                                                <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                                            </svg>
+                                        </div>
+                                        <div class="flex-1">
+                                            <h3 class="font-semibold text-sm mb-1">{{ $t('Connect with Facebook (Recommended)') }}</h3>
+                                            <p class="text-xs text-gray-600 mb-3">
+                                                {{ $t('Use Facebook Login to quickly connect your WhatsApp Business Account. You will be guided through selecting your business portfolio, WhatsApp Business Account, and phone number.') }}
+                                            </p>
+                                            <EmbeddedSignupBtn :appId="props.appId" :configId="props.configId" :graphAPIVersion="props.graphAPIVersion"/>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Manual Setup Alternative -->
+                                <div class="mt-3 text-center">
+                                    <button 
+                                        @click="openModal" 
+                                        type="button" 
+                                        class="text-sm text-gray-600 hover:text-primary underline"
+                                    >
+                                        {{ $t('Or setup manually with API credentials') }}
+                                    </button>
+                                </div>
                             </div>
-                            <div class="ml-auto">
-                                <EmbeddedSignupBtn v-if="embeddedSignupActive == 1" :appId="props.appId" :configId="props.configId" :graphAPIVersion="props.graphAPIVersion"/>
-                                <button v-else @click="openModal" type="button" class="bg-primary text-white p-2 rounded-lg text-sm mt-5 flex px-3 w-fit hover:shadow-md transition-shadow cursor-pointer">
-                                    {{ $t('Setup whatsapp') }}
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><g fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"><g opacity=".2"><path d="M12.206 5.848a1.5 1.5 0 0 1 2.113.192l3.333 4a1.5 1.5 0 1 1-2.304 1.92l-3.334-4a1.5 1.5 0 0 1 .192-2.112Z"/><path d="M12.206 16.152a1.5 1.5 0 0 1-.192-2.112l3.334-4a1.5 1.5 0 0 1 2.304 1.92l-3.333 4a1.5 1.5 0 0 1-2.113.192Z"/><path d="M16 11a1.5 1.5 0 0 1-1.5 1.5h-8a1.5 1.5 0 0 1 0-3h8A1.5 1.5 0 0 1 16 11Z"/></g><path d="M11.347 5.616a.5.5 0 0 1 .704.064l3.333 4a.5.5 0 0 1-.768.64l-3.333-4a.5.5 0 0 1 .064-.704Z"/><path d="M11.347 14.384a.5.5 0 0 1-.064-.704l3.333-4a.5.5 0 0 1 .768.64l-3.333 4a.5.5 0 0 1-.704.064Z"/><path d="M15.5 10a.5.5 0 0 1-.5.5H5a.5.5 0 0 1 0-1h20a.5.5 0 0 1 .5.5Z"/></g></svg>
-                                </button>
+                            
+                            <!-- Manual Setup Only (When Embedded Signup credentials not configured) -->
+                            <div v-else class="mb-4">
+                                <div class="bg-white border border-slate-200 rounded-lg p-4">
+                                    <h3 class="font-semibold text-sm mb-2">{{ $t('Setup WhatsApp with API Credentials') }}</h3>
+                                    <p class="text-xs text-gray-600 mb-4">
+                                        {{ $t('Enter your WhatsApp Business API credentials to connect your account.') }}
+                                    </p>
+                                    <button @click="openModal" type="button" class="bg-primary text-white p-2 rounded-lg text-sm flex px-4 w-fit hover:shadow-md transition-shadow cursor-pointer">
+                                        {{ $t('Setup WhatsApp Manually') }}
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" class="ml-2"><g fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"><g opacity=".2"><path d="M12.206 5.848a1.5 1.5 0 0 1 2.113.192l3.333 4a1.5 1.5 0 1 1-2.304 1.92l-3.334-4a1.5 1.5 0 0 1 .192-2.112Z"/><path d="M12.206 16.152a1.5 1.5 0 0 1-.192-2.112l3.334-4a1.5 1.5 0 0 1 2.304 1.92l-3.333 4a1.5 1.5 0 0 1-2.113.192Z"/><path d="M16 11a1.5 1.5 0 0 1-1.5 1.5h-8a1.5 1.5 0 0 1 0-3h8A1.5 1.5 0 0 1 16 11Z"/></g><path d="M11.347 5.616a.5.5 0 0 1 .704.064l3.333 4a.5.5 0 0 1-.768.64l-3.333-4a.5.5 0 0 1 .064-.704Z"/><path d="M11.347 14.384a.5.5 0 0 1-.064-.704l3.333-4a.5.5 0 0 1 .768.64l-3.333 4a.5.5 0 0 1-.704.064Z"/><path d="M15.5 10a.5.5 0 0 1-.5.5H5a.5.5 0 0 1 0-1h20a.5.5 0 0 1 .5.5Z"/></g></svg>
+                                    </button>
+                                    
+                                    <div v-if="embeddedSignupActive == 1" class="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                        <p class="text-xs text-blue-800 mb-1">
+                                            <strong>{{ $t('Note:') }}</strong> {{ $t('To enable Facebook Login flow, you need to configure WhatsApp Client ID and Config ID in admin settings.') }}
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -200,6 +242,127 @@
                         </div>
                     </div>
 
+                    <!-- WhatsApp Coexistence Setup Guide -->
+                    <div v-if="settings?.whatsapp" class="bg-white border border-slate-200 rounded-lg py-2 text-sm mb-4">
+                        <div class="px-4 pt-2 pb-4 border-b">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h2 class="text-[17px]">{{ $t('WhatsApp Coexistence Setup') }}</h2>
+                                    <span class="flex items-center mt-1 text-xs text-gray-600">
+                                        {{ $t('Use the same number for both WhatsApp Business App and Cloud API simultaneously') }}
+                                    </span>
+                                </div>
+                                <button 
+                                    v-if="coexistenceStatus?.support_check?.supported && !coexistenceStatus?.enabled"
+                                    @click="enableCoexistence()" 
+                                    class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition-colors"
+                                >
+                                    {{ $t('Enable Coexistence') }}
+                                </button>
+                                <span 
+                                    v-else-if="coexistenceStatus?.enabled"
+                                    class="bg-green-100 text-green-800 px-4 py-2 rounded-lg text-sm"
+                                >
+                                    {{ $t('Coexistence Enabled') }}
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Support Status -->
+                        <div v-if="coexistenceStatus?.support_check" class="px-4 py-3 border-b">
+                            <div class="flex items-start space-x-3">
+                                <div v-if="coexistenceStatus.support_check.supported" class="flex-shrink-0 mt-1">
+                                    <svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                    </svg>
+                                </div>
+                                <div v-else class="flex-shrink-0 mt-1">
+                                    <svg class="w-5 h-5 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                    </svg>
+                                </div>
+                                <div class="flex-1">
+                                    <p class="text-sm font-medium" :class="coexistenceStatus.support_check.supported ? 'text-green-800' : 'text-red-800'">
+                                        {{ coexistenceStatus.support_check.message }}
+                                    </p>
+                                    <p v-if="coexistenceStatus.support_check.country_code" class="text-xs text-gray-600 mt-1">
+                                        {{ $t('Country Code') }}: {{ coexistenceStatus.support_check.country_code }}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Requirements -->
+                        <div v-if="coexistenceStatus?.requirements" class="px-4 py-3 border-b">
+                            <h3 class="text-sm font-semibold mb-2">{{ $t('Requirements') }}</h3>
+                            <ul class="space-y-2 text-xs">
+                                <li class="flex items-start">
+                                    <span class="mr-2">•</span>
+                                    <span>{{ $t('WhatsApp Business App version') }} {{ coexistenceStatus.requirements.business_app_version?.required }} {{ $t('or higher') }}</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <span class="mr-2">•</span>
+                                    <span>{{ coexistenceStatus.requirements.country_support?.description }}</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <span class="mr-2">•</span>
+                                    <span>{{ coexistenceStatus.requirements.waiting_period?.description }}</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <span class="mr-2">•</span>
+                                    <span>{{ coexistenceStatus.requirements.facebook_page_link?.description }}</span>
+                                </li>
+                            </ul>
+                        </div>
+
+                        <!-- Setup Instructions -->
+                        <div v-if="coexistenceStatus?.setup_instructions" class="px-4 py-3">
+                            <button 
+                                @click="showCoexistenceGuide = !showCoexistenceGuide"
+                                class="flex items-center justify-between w-full text-left text-sm font-semibold hover:text-primary transition-colors"
+                            >
+                                <span>{{ $t('View Setup Guide') }}</span>
+                                <svg 
+                                    class="w-5 h-5 transition-transform" 
+                                    :class="{ 'rotate-180': showCoexistenceGuide }"
+                                    fill="none" 
+                                    stroke="currentColor" 
+                                    viewBox="0 0 24 24"
+                                >
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </button>
+                            
+                            <div v-if="showCoexistenceGuide" class="mt-4 space-y-4 text-xs">
+                                <div v-for="(section, index) in coexistenceStatus.setup_instructions.sections" :key="index" class="border-l-2 border-primary pl-4">
+                                    <h4 class="font-semibold mb-2">{{ section.title }}</h4>
+                                    <ul class="space-y-1 text-gray-700">
+                                        <li v-for="(item, itemIndex) in section.items" :key="itemIndex" class="flex items-start">
+                                            <span class="mr-2">•</span>
+                                            <span>{{ item }}</span>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Facebook Page Link Steps -->
+                        <div v-if="coexistenceStatus?.requirements?.facebook_page_link?.steps" class="px-4 py-3 border-t">
+                            <h3 class="text-sm font-semibold mb-3">{{ $t('How to Link Facebook Page') }}</h3>
+                            <ol class="space-y-3 text-xs">
+                                <li v-for="step in coexistenceStatus.requirements.facebook_page_link.steps" :key="step.step" class="flex items-start">
+                                    <span class="flex-shrink-0 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center text-xs font-semibold mr-3">
+                                        {{ step.step }}
+                                    </span>
+                                    <div class="flex-1">
+                                        <p class="font-medium">{{ step.action }}</p>
+                                        <p class="text-gray-600 mt-1">{{ step.description }}</p>
+                                    </div>
+                                </li>
+                            </ol>
+                        </div>
+                    </div>
+
                     <div v-if="settings?.whatsapp" class="bg-white border border-slate-200 rounded-lg py-2 text-sm mb-20">
                         <div class="flex items-center px-4 pt-2 pb-4">
                             <div class="w-[60%]">
@@ -306,7 +469,7 @@
     import { trans } from 'laravel-vue-i18n';
     import { router, useForm } from "@inertiajs/vue3";
 
-    const props = defineProps(['settings', 'embeddedSignupActive', 'appId', 'configId', 'graphAPIVersion', 'modules']);
+    const props = defineProps(['settings', 'embeddedSignupActive', 'appId', 'configId', 'graphAPIVersion', 'modules', 'coexistenceStatus']);
     const statusView = ref(false);
     const config = ref(props.settings.metadata);
     const currentURL = ref(window.location.origin);
@@ -314,6 +477,8 @@
     const isOpenForm2Modal = ref(false);
     const settings = ref(config.value ? JSON.parse(config.value) : null);
     const refreshLoading = ref(false);
+    const showCoexistenceGuide = ref(false);
+    const coexistenceStatus = ref(props.coexistenceStatus || null);
     const form = useForm({
         app_id: settings.value && settings.value.whatsapp ? settings.value.whatsapp.app_id : null,
         access_token: settings.value && settings.value.whatsapp ? settings.value.whatsapp.access_token : null,
@@ -420,6 +585,17 @@
     const deleteIntegration = () => {
         router.delete(`/settings/whatsapp/business-profile`, {
             onBefore: () => confirm('Are you sure you want to delete your integration?'),
+            preserveState: true,
+            onSuccess: () => {
+                router.visit('/settings/whatsapp', {
+                    preserveState: false,
+                });
+            },
+        })
+    }
+
+    const enableCoexistence = () => {
+        router.post('/settings/whatsapp/coexistence/enable', {}, {
             preserveState: true,
             onSuccess: () => {
                 router.visit('/settings/whatsapp', {

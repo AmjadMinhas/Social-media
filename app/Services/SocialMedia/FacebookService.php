@@ -157,29 +157,239 @@ class FacebookService
             ];
 
             // Add media if present
-            if (!empty($scheduledPost->media)) {
-                // For single image
-                if (count($scheduledPost->media) === 1) {
-                    $postData['url'] = $scheduledPost->media[0];
-                    $endpoint = "{$this->baseUrl}/{$pageId}/photos";
-                } 
-                // For multiple images (carousel)
-                else if (count($scheduledPost->media) > 1) {
-                    // TODO: Implement multi-photo upload
-                    $endpoint = "{$this->baseUrl}/{$pageId}/feed";
+            $media = $scheduledPost->media;
+            
+            // Ensure media is an array (it might be JSON string or null)
+            if (is_string($media)) {
+                $media = json_decode($media, true);
+            }
+            
+            // Handle null or empty media
+            if (empty($media)) {
+                $media = [];
+            }
+            
+            Log::info('Facebook publish: Processing media', [
+                'raw_media' => $scheduledPost->getRawOriginal('media'),
+                'has_media' => !empty($media),
+                'media_count' => is_array($media) ? count($media) : 0,
+                'media_type' => gettype($media),
+                'media_content' => $media
+            ]);
+            
+            if (!empty($media) && is_array($media) && count($media) > 0) {
+                $firstMedia = $media[0];
+                
+                // Check if it's a video (MP4) or image
+                $isVideo = str_contains($firstMedia, '.mp4') || str_contains(strtolower($firstMedia), 'video');
+                
+                if ($isVideo) {
+                    // For video, use video endpoint
+                    $postData['file_url'] = $firstMedia;
+                    $postData['description'] = $scheduledPost->content;
+                    $endpoint = "{$this->baseUrl}/{$pageId}/videos";
+                    Log::info('Facebook publish: Using videos endpoint for video', [
+                        'video_url' => $firstMedia
+                    ]);
+                } else {
+                    // For single image - Facebook requires file upload, not URL
+                    if (count($media) === 1) {
+                        // Get local file path from URL
+                        $localFilePath = $this->getLocalFilePathFromUrl($firstMedia);
+                        
+                        if ($localFilePath && file_exists($localFilePath)) {
+                            // Use local file directly
+                            try {
+                                $uploadData = [
+                                    'message' => $scheduledPost->content,
+                                    'access_token' => $account->access_token,
+                                ];
+                                
+                                $endpoint = "{$this->baseUrl}/{$pageId}/photos";
+                                
+                                Log::info('Facebook publish: Using photos endpoint with local file', [
+                                    'image_url' => $firstMedia,
+                                    'local_path' => $localFilePath,
+                                    'endpoint' => $endpoint
+                                ]);
+                                
+                                // Upload as multipart form data
+                                $response = Http::attach('source', file_get_contents($localFilePath), basename($firstMedia))
+                                    ->post($endpoint, $uploadData);
+                            } catch (\Exception $e) {
+                                Log::error('Facebook publish: Failed to upload local file', [
+                                    'error' => $e->getMessage(),
+                                    'local_path' => $localFilePath
+                                ]);
+                                throw $e;
+                            }
+                        } else {
+                            // Try downloading if local file not found
+                            try {
+                                Log::info('Facebook publish: Local file not found, downloading from URL', [
+                                    'image_url' => $firstMedia
+                                ]);
+                                
+                                $imageContent = Http::timeout(30)->get($firstMedia)->body();
+                                $tempFile = tmpfile();
+                                $tempPath = stream_get_meta_data($tempFile)['uri'];
+                                file_put_contents($tempPath, $imageContent);
+                                
+                                $uploadData = [
+                                    'message' => $scheduledPost->content,
+                                    'access_token' => $account->access_token,
+                                ];
+                                
+                                $endpoint = "{$this->baseUrl}/{$pageId}/photos";
+                                
+                                $response = Http::attach('source', file_get_contents($tempPath), basename($firstMedia))
+                                    ->post($endpoint, $uploadData);
+                                
+                                @unlink($tempPath);
+                            } catch (\Exception $e) {
+                                Log::error('Facebook publish: Failed to download/upload image', [
+                                    'error' => $e->getMessage(),
+                                    'image_url' => $firstMedia
+                                ]);
+                                throw $e;
+                            }
+                        }
+                    } 
+                    // For multiple images - Facebook supports multiple images in one post
+                    else if (count($media) > 1) {
+                        Log::info('Facebook publish: Processing multiple images', [
+                            'total_images' => count($media),
+                        ]);
+                        
+                        $attachedMedia = [];
+                        
+                        // Step 1: Upload each image as unpublished photo
+                        foreach ($media as $imageUrl) {
+                            $localFilePath = $this->getLocalFilePathFromUrl($imageUrl);
+                            
+                            if ($localFilePath && file_exists($localFilePath)) {
+                                try {
+                                    $uploadData = [
+                                        'published' => false,
+                                        'access_token' => $account->access_token,
+                                    ];
+                                    
+                                    $uploadEndpoint = "{$this->baseUrl}/{$pageId}/photos";
+                                    
+                                    $uploadResponse = Http::attach('source', file_get_contents($localFilePath), basename($imageUrl))
+                                        ->post($uploadEndpoint, $uploadData);
+                                    
+                                    if ($uploadResponse->successful()) {
+                                        $photoData = $uploadResponse->json();
+                                        $photoId = $photoData['id'] ?? null;
+                                        
+                                        if ($photoId) {
+                                            $attachedMedia[] = json_encode(['media_fbid' => $photoId]);
+                                            Log::info('Facebook publish: Photo uploaded (unpublished)', [
+                                                'photo_id' => $photoId,
+                                            ]);
+                                        }
+                                    } else {
+                                        Log::warning('Facebook publish: Failed to upload photo', [
+                                            'image_url' => $imageUrl,
+                                            'response' => $uploadResponse->body(),
+                                        ]);
+                                    }
+                                } catch (\Exception $e) {
+                                    Log::error('Facebook publish: Exception uploading photo', [
+                                        'image_url' => $imageUrl,
+                                        'error' => $e->getMessage(),
+                                    ]);
+                                }
+                            } else {
+                                // Try downloading if local file not found
+                                try {
+                                    $imageContent = Http::timeout(30)->get($imageUrl)->body();
+                                    $tempFile = tmpfile();
+                                    $tempPath = stream_get_meta_data($tempFile)['uri'];
+                                    file_put_contents($tempPath, $imageContent);
+                                    
+                                    $uploadData = [
+                                        'published' => false,
+                                        'access_token' => $account->access_token,
+                                    ];
+                                    
+                                    $uploadEndpoint = "{$this->baseUrl}/{$pageId}/photos";
+                                    
+                                    $uploadResponse = Http::attach('source', file_get_contents($tempPath), basename($imageUrl))
+                                        ->post($uploadEndpoint, $uploadData);
+                                    
+                                    @unlink($tempPath);
+                                    
+                                    if ($uploadResponse->successful()) {
+                                        $photoData = $uploadResponse->json();
+                                        $photoId = $photoData['id'] ?? null;
+                                        
+                                        if ($photoId) {
+                                            $attachedMedia[] = json_encode(['media_fbid' => $photoId]);
+                                        }
+                                    }
+                                } catch (\Exception $e) {
+                                    Log::error('Facebook publish: Exception downloading/uploading photo', [
+                                        'image_url' => $imageUrl,
+                                        'error' => $e->getMessage(),
+                                    ]);
+                                }
+                            }
+                        }
+                        
+                        // Step 2: Create post with all attached media
+                        if (!empty($attachedMedia)) {
+                            $postData = [
+                                'message' => $scheduledPost->content,
+                                'attached_media' => $attachedMedia,
+                                'access_token' => $account->access_token,
+                            ];
+                            
+                            $endpoint = "{$this->baseUrl}/{$pageId}/feed";
+                            
+                            Log::info('Facebook publish: Creating post with multiple images', [
+                                'images_count' => count($attachedMedia),
+                                'endpoint' => $endpoint,
+                            ]);
+                            
+                            $response = Http::post($endpoint, $postData);
+                        } else {
+                            throw new Exception('Failed to upload any images for multi-image post');
+                        }
+                    }
                 }
             } else {
                 // Text only post
                 $endpoint = "{$this->baseUrl}/{$pageId}/feed";
+                Log::info('Facebook publish: Using feed endpoint for text-only post');
+                $response = Http::post($endpoint, $postData);
             }
 
-            $response = Http::post($endpoint, $postData);
+            // Ensure response is defined
+            if (!isset($response)) {
+                Log::error('Facebook publish: Response not defined, endpoint not called');
+                throw new Exception('Failed to send request to Facebook API');
+            }
 
             if ($response->failed()) {
-                throw new Exception('Failed to publish post: ' . $response->body());
+                $errorBody = $response->body();
+                Log::error('Facebook publish: Request failed', [
+                    'status' => $response->status(),
+                    'error' => $errorBody,
+                    'endpoint' => $endpoint,
+                    'post_id' => $scheduledPost->id
+                ]);
+                throw new Exception('Failed to publish post: ' . $errorBody);
             }
 
             $result = $response->json();
+            
+            Log::info('Facebook publish: Success', [
+                'post_id' => $scheduledPost->id,
+                'facebook_post_id' => $result['id'] ?? $result['post_id'] ?? null,
+                'response' => $result
+            ]);
             
             // Mark account as used
             $account->markAsUsed();
@@ -237,6 +447,127 @@ class FacebookService
         } catch (Exception $e) {
             Log::error('Facebook verify account error: ' . $e->getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Send a message via Facebook Messenger
+     */
+    public function sendMessage(SocialAccount $account, $recipientId, $message)
+    {
+        try {
+            $pageId = $account->platform_data['page_id'] ?? $account->platform_user_id;
+            $accessToken = $account->access_token;
+
+            if (!$pageId || !$accessToken) {
+                throw new Exception('Missing page ID or access token');
+            }
+
+            // Facebook Messenger API endpoint: Use /me/messages with page access token
+            // The page access token automatically scopes to the correct page
+            $endpoint = "{$this->baseUrl}/me/messages";
+
+            $requestData = [
+                'recipient' => [
+                    'id' => $recipientId
+                ],
+                'message' => [
+                    'text' => $message
+                ],
+                'access_token' => $accessToken
+            ];
+
+            Log::info('Facebook Messenger: Sending message', [
+                'page_id' => $pageId,
+                'recipient_id' => $recipientId,
+                'message_preview' => substr($message, 0, 50)
+            ]);
+
+            $response = Http::post($endpoint, $requestData);
+
+            if ($response->failed()) {
+                $errorBody = $response->body();
+                $errorJson = json_decode($errorBody, true);
+                $errorMessage = $errorJson['error']['message'] ?? 'Unknown error';
+                $errorCode = $errorJson['error']['code'] ?? null;
+
+                Log::error('Facebook Messenger: Failed to send message', [
+                    'status' => $response->status(),
+                    'error' => $errorBody,
+                    'recipient_id' => $recipientId,
+                    'error_code' => $errorCode,
+                    'error_message' => $errorMessage
+                ]);
+
+                throw new Exception("Failed to send message: {$errorBody}");
+            }
+
+            $result = $response->json();
+
+            Log::info('Facebook Messenger: Message sent successfully', [
+                'message_id' => $result['message_id'] ?? null,
+                'recipient_id' => $recipientId
+            ]);
+
+            return [
+                'success' => true,
+                'message_id' => $result['message_id'] ?? null,
+                'data' => $result
+            ];
+
+        } catch (Exception $e) {
+            Log::error('Facebook Messenger send error: ' . $e->getMessage(), [
+                'account_id' => $account->id,
+                'recipient_id' => $recipientId
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * Get local file path from URL
+     */
+    protected function getLocalFilePathFromUrl($url)
+    {
+        try {
+            // Extract path from URL (e.g., /media/public/post-scheduler/file.png)
+            $parsedUrl = parse_url($url);
+            $path = $parsedUrl['path'] ?? '';
+            
+            // Remove /media prefix if present
+            if (strpos($path, '/media/') === 0) {
+                $path = substr($path, 7); // Remove '/media/' (7 chars)
+            }
+            
+            // Path is now: public/post-scheduler/file.png
+            // Storage path: storage/app/public/post-scheduler/file.png
+            $storagePath = storage_path('app/' . $path);
+            
+            // Also check public symlink path: public/storage/post-scheduler/file.png
+            $publicPath = public_path('storage/' . ltrim($path, 'public/'));
+            
+            Log::info('Facebook publish: Extracting local path', [
+                'url' => $url,
+                'extracted_path' => $path,
+                'storage_path' => $storagePath,
+                'public_path' => $publicPath,
+                'storage_exists' => file_exists($storagePath),
+                'public_exists' => file_exists($publicPath)
+            ]);
+            
+            if (file_exists($storagePath)) {
+                return $storagePath;
+            } elseif (file_exists($publicPath)) {
+                return $publicPath;
+            }
+            
+            return null;
+        } catch (\Exception $e) {
+            Log::error('Facebook publish: Failed to extract local path', [
+                'url' => $url,
+                'error' => $e->getMessage()
+            ]);
+            return null;
         }
     }
 }

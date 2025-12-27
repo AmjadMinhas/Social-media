@@ -15,6 +15,7 @@ use App\Models\Template;
 use App\Services\ContactFieldService;
 use App\Services\WhatsappService;
 use App\Services\WhatsAppDeviceSessionService;
+use App\Services\WhatsAppCoexistenceService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\URL;
 use Inertia\Inertia;
@@ -64,14 +65,31 @@ class SettingController extends BaseController
         $settings = Setting::whereIn('key', ['is_embedded_signup_active', 'whatsapp_client_id', 'whatsapp_config_id'])
             ->pluck('value', 'key');
 
+        $organizationId = session()->get('current_organization');
+        $coexistenceService = new WhatsAppCoexistenceService($organizationId);
+        $coexistenceStatus = $coexistenceService->getCoexistenceStatus();
+
+        // Check if Embedded Signup addon is enabled in database
+        $addonEnabled = \App\Models\Addon::where('name', 'Embedded Signup')
+            ->where('status', 1)
+            ->where('is_active', 1)
+            ->exists();
+        
+        $appId = $settings->get('whatsapp_client_id', null);
+        $configId = $settings->get('whatsapp_config_id', null);
+        
+        // Show embedded signup if addon is enabled AND credentials are configured
+        $embeddedSignupActive = $addonEnabled && !empty($appId) && !empty($configId);
+
         $data = [
-            'embeddedSignupActive' => CustomHelper::isModuleEnabled('Embedded Signup'),
+            'embeddedSignupActive' => $embeddedSignupActive ? 1 : 0,
             'graphAPIVersion' => config('graph.api_version'),
-            'appId' => $settings->get('whatsapp_client_id', null),
-            'configId' => $settings->get('whatsapp_config_id', null),
-            'settings' => Organization::where('id', session()->get('current_organization'))->first(),
+            'appId' => $appId,
+            'configId' => $configId,
+            'settings' => Organization::where('id', $organizationId)->first(),
             'modules' => Addon::get(),
             'title' => __('Settings'),
+            'coexistenceStatus' => $coexistenceStatus,
         ];
 
         return Inertia::render('User/Settings/Whatsapp', $data);
@@ -374,7 +392,7 @@ class SettingController extends BaseController
         }
 
         //Get business profile
-        $businessProfileResponse = $whatsappService->getBusinessProfile($accessToken, $phoneNumberResponse->data->id);  
+        $businessProfileResponse = $whatsappService->getBusinessProfile();  
         
         if(!$businessProfileResponse->success){
             return back()->with(
@@ -592,6 +610,63 @@ class SettingController extends BaseController
                 'message' => $message
             ]
         );
+    }
+
+    /**
+     * Check WhatsApp Coexistence support
+     */
+    public function checkCoexistenceSupport(Request $request)
+    {
+        $organizationId = session()->get('current_organization');
+        $coexistenceService = new WhatsAppCoexistenceService($organizationId);
+        
+        $status = $coexistenceService->checkCoexistenceSupport();
+        
+        return response()->json($status);
+    }
+
+    /**
+     * Enable WhatsApp Coexistence
+     */
+    public function enableCoexistence(Request $request)
+    {
+        if ($response = $this->abortIfDemo()) {
+            return $response;
+        }
+
+        $organizationId = session()->get('current_organization');
+        $coexistenceService = new WhatsAppCoexistenceService($organizationId);
+        
+        $result = $coexistenceService->enableCoexistence();
+        
+        if ($result['success']) {
+            return back()->with(
+                'status', [
+                    'type' => 'success', 
+                    'message' => $result['message']
+                ]
+            );
+        }
+
+        return back()->with(
+            'status', [
+                'type' => 'error', 
+                'message' => $result['message']
+            ]
+        );
+    }
+
+    /**
+     * Get coexistence status and instructions
+     */
+    public function getCoexistenceStatus(Request $request)
+    {
+        $organizationId = session()->get('current_organization');
+        $coexistenceService = new WhatsAppCoexistenceService($organizationId);
+        
+        $status = $coexistenceService->getCoexistenceStatus();
+        
+        return response()->json($status);
     }
 
     protected function abortIfDemo(){

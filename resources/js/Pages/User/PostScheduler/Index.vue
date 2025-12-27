@@ -13,7 +13,15 @@
             </div>
 
             <!-- Table Component-->
-            <PostSchedulerTable :rows="props.rows" :filters="props.filters" :connectedAccounts="props.connectedAccounts || {}"/>
+            <PostSchedulerTable 
+                v-if="rows && rows.data !== undefined" 
+                :rows="rows" 
+                :filters="filters || {}" 
+                :connectedAccounts="connectedAccounts || {}"
+            />
+            <div v-else class="p-8 text-center text-gray-500">
+                <p>Loading...</p>
+            </div>
         </div>
     </AppLayout>
 </template>

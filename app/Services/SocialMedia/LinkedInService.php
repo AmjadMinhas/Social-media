@@ -64,10 +64,10 @@ class LinkedInService
     public function getUserProfile($accessToken)
     {
         try {
-            // Get basic profile using v2 API (doesn't require openid scope)
+            // Use OpenID Connect userinfo endpoint
             $response = Http::withHeaders([
                 'Authorization' => "Bearer {$accessToken}",
-            ])->get("{$this->baseUrl}/me");
+            ])->get("{$this->baseUrl}/userinfo");
 
             if ($response->failed()) {
                 throw new Exception('Failed to get user profile: ' . $response->body());
@@ -75,25 +75,15 @@ class LinkedInService
 
             $profile = $response->json();
             
-            // Get email separately if needed
-            $emailResponse = Http::withHeaders([
-                'Authorization' => "Bearer {$accessToken}",
-            ])->get("{$this->baseUrl}/emailAddress?q=members&projection=(elements*(handle~))");
-            
-            $email = null;
-            if ($emailResponse->successful()) {
-                $emailData = $emailResponse->json();
-                $email = $emailData['elements'][0]['handle~']['emailAddress'] ?? null;
-            }
-            
             // Format response to match expected structure
+            // OpenID Connect returns sub, name, given_name, family_name, email, picture
             return [
-                'sub' => $profile['id'] ?? null,
-                'name' => ($profile['localizedFirstName'] ?? '') . ' ' . ($profile['localizedLastName'] ?? ''),
-                'given_name' => $profile['localizedFirstName'] ?? null,
-                'family_name' => $profile['localizedLastName'] ?? null,
-                'email' => $email,
-                'picture' => $profile['profilePicture']['displayImage~']['elements'][0]['identifiers'][0]['identifier'] ?? null,
+                'sub' => $profile['sub'] ?? null,
+                'name' => $profile['name'] ?? null,
+                'given_name' => $profile['given_name'] ?? null,
+                'family_name' => $profile['family_name'] ?? null,
+                'email' => $profile['email'] ?? null,
+                'picture' => $profile['picture'] ?? null,
             ];
         } catch (Exception $e) {
             Log::error('LinkedIn get profile error: ' . $e->getMessage());
@@ -109,14 +99,14 @@ class LinkedInService
         try {
             $response = Http::withHeaders([
                 'Authorization' => "Bearer {$accessToken}",
-            ])->get("{$this->baseUrl}/me");
+            ])->get("{$this->baseUrl}/userinfo");
 
             if ($response->failed()) {
                 throw new Exception('Failed to get person URN: ' . $response->body());
             }
 
             $data = $response->json();
-            return $data['id'] ?? null;
+            return $data['sub'] ?? null;
         } catch (Exception $e) {
             Log::error('LinkedIn get person URN error: ' . $e->getMessage());
             throw $e;
@@ -153,14 +143,22 @@ class LinkedInService
                 ],
             ];
 
-            // Add media if present
-            if (!empty($scheduledPost->media)) {
+            // Add media if present - parse JSON string if needed
+            $media = $scheduledPost->media;
+            if (is_string($media)) {
+                $media = json_decode($media, true);
+            }
+            if (empty($media)) {
+                $media = [];
+            }
+            
+            if (!empty($media) && is_array($media) && count($media) > 0) {
                 $postData['specificContent']['com.linkedin.ugc.ShareContent']['shareMediaCategory'] = 'IMAGE';
                 
                 // For now, handle single image
                 // Multi-image requires more complex implementation
-                if (count($scheduledPost->media) === 1) {
-                    $mediaUrn = $this->uploadImage($account->access_token, $personUrn, $scheduledPost->media[0]);
+                if (count($media) === 1) {
+                    $mediaUrn = $this->uploadImage($account->access_token, $personUrn, $media[0]);
                     
                     if ($mediaUrn) {
                         $postData['specificContent']['com.linkedin.ugc.ShareContent']['media'] = [
@@ -213,8 +211,10 @@ class LinkedInService
     protected function uploadImage($accessToken, $personUrn, $imageUrl)
     {
         try {
+            Log::info('LinkedIn: Starting image upload', ['image_url' => $imageUrl]);
+            
             // Step 1: Register upload
-            $registerResponse = Http::withHeaders([
+            $registerResponse = Http::timeout(30)->withHeaders([
                 'Authorization' => "Bearer {$accessToken}",
                 'Content-Type' => 'application/json',
             ])->post("{$this->baseUrl}/assets?action=registerUpload", [
@@ -242,22 +242,96 @@ class LinkedInService
                 throw new Exception('Invalid upload registration response');
             }
 
-            // Step 2: Upload image
-            $imageContent = file_get_contents($imageUrl);
+            Log::info('LinkedIn: Upload registered successfully', [
+                'asset' => $asset,
+                'has_upload_url' => !empty($uploadUrl)
+            ]);
+
+            // Step 2: Get image content - try local file first, then download
+            $localFilePath = $this->getLocalFilePathFromUrl($imageUrl);
+            $imageContent = null;
             
-            $uploadResponse = Http::withHeaders([
+            if ($localFilePath && file_exists($localFilePath)) {
+                Log::info('LinkedIn: Using local file', ['local_path' => $localFilePath]);
+                $imageContent = file_get_contents($localFilePath);
+            } else {
+                Log::info('LinkedIn: Downloading image from URL', ['image_url' => $imageUrl]);
+                // Use Http client with timeout instead of file_get_contents
+                $imageResponse = Http::timeout(30)->get($imageUrl);
+                
+                if ($imageResponse->failed()) {
+                    throw new Exception('Failed to download image: ' . $imageResponse->body());
+                }
+                
+                $imageContent = $imageResponse->body();
+            }
+            
+            if (empty($imageContent)) {
+                throw new Exception('Image content is empty');
+            }
+
+            Log::info('LinkedIn: Image content retrieved', [
+                'content_size' => strlen($imageContent)
+            ]);
+            
+            // Step 3: Upload image to LinkedIn
+            $uploadResponse = Http::timeout(60)->withHeaders([
                 'Authorization' => "Bearer {$accessToken}",
             ])->withBody($imageContent, 'application/octet-stream')
               ->put($uploadUrl);
 
             if ($uploadResponse->failed()) {
-                throw new Exception('Failed to upload image');
+                throw new Exception('Failed to upload image: ' . $uploadResponse->body());
             }
 
+            Log::info('LinkedIn: Image uploaded successfully', ['asset' => $asset]);
             return $asset;
 
         } catch (Exception $e) {
-            Log::error('LinkedIn image upload error: ' . $e->getMessage());
+            Log::error('LinkedIn image upload error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Get local file path from URL (similar to FacebookService)
+     */
+    protected function getLocalFilePathFromUrl($url)
+    {
+        try {
+            // Extract path from URL (e.g., /media/public/post-scheduler/file.png)
+            $parsedUrl = parse_url($url);
+            $path = $parsedUrl['path'] ?? '';
+            
+            // Remove /media prefix if present
+            if (strpos($path, '/media/') === 0) {
+                $path = substr($path, 7); // Remove '/media/' (7 chars)
+            }
+            
+            // Check if it's a public storage path
+            if (strpos($path, 'public/') === 0) {
+                $relativePath = substr($path, 7); // Remove 'public/' (7 chars)
+                $storagePath = storage_path('app/public/' . $relativePath);
+                
+                if (file_exists($storagePath)) {
+                    return $storagePath;
+                }
+            }
+            
+            // Try direct storage path
+            $storagePath = storage_path('app/' . ltrim($path, '/'));
+            if (file_exists($storagePath)) {
+                return $storagePath;
+            }
+            
+            return null;
+        } catch (Exception $e) {
+            Log::warning('LinkedIn: Failed to get local file path', [
+                'url' => $url,
+                'error' => $e->getMessage()
+            ]);
             return null;
         }
     }
@@ -287,7 +361,7 @@ class LinkedInService
         try {
             $response = Http::withHeaders([
                 'Authorization' => "Bearer {$account->access_token}",
-            ])->get("{$this->baseUrl}/me");
+            ])->get("{$this->baseUrl}/userinfo");
 
             return $response->successful();
         } catch (Exception $e) {

@@ -26,7 +26,8 @@ class PostSchedulerController extends BaseController
             $dateTo = $request->query('date_to');
             
             $query = ScheduledPost::where('organization_id', $organizationId)
-                ->where('deleted_at', null);
+                ->whereNull('deleted_at')
+                ->with('user'); // Eager load user to avoid N+1 queries
             
             if ($searchTerm) {
                 $query->where(function ($q) use ($searchTerm) {
@@ -56,7 +57,9 @@ class PostSchedulerController extends BaseController
                 $query->whereDate('scheduled_at', '<=', $dateTo);
             }
             
-            $paginated = $query->latest('scheduled_at')->paginate(10);
+            // Order by created_at for "now" posts, scheduled_at for scheduled posts
+            $paginated = $query->orderByRaw('CASE WHEN publish_type = "now" THEN created_at ELSE scheduled_at END DESC')
+                ->paginate(10);
             
             // Transform paginated data
             $rows = [
@@ -77,14 +80,15 @@ class PostSchedulerController extends BaseController
                 ->groupBy('platform')
                 ->map(function ($accounts) {
                     return $accounts->first();
-                });
+                })
+                ->toArray(); // Convert to array for Inertia
             
             return Inertia::render('User/PostScheduler/Index', [
                 'title' => __('Post Scheduler'),
                 'allowCreate' => true,
                 'rows' => $rows,
                 'filters' => request()->all(['search', 'status', 'platform', 'date_from', 'date_to']),
-                'connectedAccounts' => $connectedAccounts
+                'connectedAccounts' => $connectedAccounts ?: []
             ]);
             
         } else if ($uuid == 'create') {
@@ -108,6 +112,30 @@ class PostSchedulerController extends BaseController
 
     public function store(Request $request)
     {
+        // Simple log first to ensure it works
+        error_log('=== POST SCHEDULER STORE CALLED ===');
+        error_log('Request method: ' . $request->method());
+        error_log('All data: ' . json_encode($request->all()));
+        error_log('Title: ' . ($request->input('title') ?? 'NULL'));
+        error_log('Content: ' . ($request->input('content') ?? 'NULL'));
+        error_log('Platforms: ' . json_encode($request->input('platforms')));
+        error_log('Publish type: ' . ($request->input('publish_type') ?? 'NULL'));
+        
+        // Log all incoming request data for debugging
+        \Illuminate\Support\Facades\Log::info('Post scheduler store request received', [
+            'all_request_data' => $request->all(),
+            'title' => $request->input('title'),
+            'content' => $request->input('content'),
+            'platforms' => $request->input('platforms'),
+            'publish_type' => $request->input('publish_type'),
+            'scheduled_at' => $request->input('scheduled_at'),
+            'media' => $request->input('media'),
+            'request_method' => $request->method(),
+            'content_type' => $request->header('Content-Type'),
+            'is_json' => $request->isJson(),
+            'is_ajax' => $request->ajax(),
+        ]);
+
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'content' => 'required|string',
@@ -124,13 +152,16 @@ class PostSchedulerController extends BaseController
         $organizationId = session()->get('current_organization');
 
         // Determine scheduled_at based on publish_type
+        // Note: scheduled_at comes from frontend in local timezone, we store it as-is
+        // The frontend datetime-local input sends time in user's local timezone
         $scheduledAt = now();
         if ($validated['publish_type'] === 'scheduled') {
-            $scheduledAt = $validated['scheduled_at'];
+            // Parse the datetime string - it's already in the user's local timezone
+            $scheduledAt = \Carbon\Carbon::parse($validated['scheduled_at']);
         } elseif ($validated['publish_type'] === 'time_range') {
             // For time_range, we'll calculate a random time when processing
             // For now, set to scheduled_from
-            $scheduledAt = $validated['scheduled_from'];
+            $scheduledAt = \Carbon\Carbon::parse($validated['scheduled_from']);
         }
 
         $post = ScheduledPost::create([
@@ -142,15 +173,56 @@ class PostSchedulerController extends BaseController
             'platforms' => json_encode($validated['platforms']),
             'publish_type' => $validated['publish_type'],
             'scheduled_at' => $scheduledAt,
-            'scheduled_from' => $validated['scheduled_from'] ?? null,
-            'scheduled_to' => $validated['scheduled_to'] ?? null,
-            'media' => isset($validated['media']) ? json_encode($validated['media']) : null,
-            'status' => $validated['publish_type'] === 'now' ? 'scheduled' : 'scheduled'
+            'scheduled_from' => isset($validated['scheduled_from']) ? \Carbon\Carbon::parse($validated['scheduled_from']) : null,
+            'scheduled_to' => isset($validated['scheduled_to']) ? \Carbon\Carbon::parse($validated['scheduled_to']) : null,
+            'media' => isset($validated['media']) && !empty($validated['media']) && is_array($validated['media']) ? json_encode($validated['media']) : null,
+            'status' => 'scheduled'
         ]);
 
-        // If publish_type is 'now', dispatch immediately
+        // Log after creation to verify media was saved
+        \Illuminate\Support\Facades\Log::info('Post created', [
+            'post_id' => $post->id,
+            'post_uuid' => $post->uuid,
+            'raw_media' => $post->getRawOriginal('media'),
+            'decoded_media' => $post->media,
+            'has_media' => !empty($post->media),
+            'scheduled_at' => $post->scheduled_at
+        ]);
+
+        // If publish_type is 'now', publish immediately (synchronously)
         if ($validated['publish_type'] === 'now') {
-            \App\Jobs\PublishScheduledPostJob::dispatch($post);
+            \Illuminate\Support\Facades\Log::info('Publishing post immediately', [
+                'post_id' => $post->id,
+                'post_uuid' => $post->uuid,
+                'platforms' => $validated['platforms'],
+                'has_media' => !empty($validated['media']),
+                'media_count' => isset($validated['media']) ? count($validated['media']) : 0,
+                'media' => $validated['media'] ?? null
+            ]);
+            
+            // Mark as processing
+            $post->update(['status' => 'publishing']);
+            
+            try {
+                // Use dispatchSync to execute immediately (no queue worker needed)
+                \App\Jobs\PublishScheduledPostJob::dispatchSync($post);
+                
+                \Illuminate\Support\Facades\Log::info('Post publishing job executed synchronously', [
+                    'post_id' => $post->id
+                ]);
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Failed to publish post', [
+                    'post_id' => $post->id,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                
+                // Update post status to failed
+                $post->update([
+                    'status' => 'failed',
+                    'error_message' => 'Failed to publish post: ' . $e->getMessage()
+                ]);
+            }
         }
 
         $message = $validated['publish_type'] === 'now' 
@@ -237,6 +309,80 @@ class PostSchedulerController extends BaseController
                 'message' => __('Scheduled post deleted successfully!')
             ]
         );
+    }
+
+    /**
+     * Upload media for post scheduler
+     */
+    public function uploadMedia(Request $request)
+    {
+        try {
+            $request->validate([
+                'file' => 'required|file|mimes:jpeg,jpg,png,gif,webp,mp4,mov,avi|max:102400', // 100MB max for videos
+            ]);
+
+            $organizationId = session()->get('current_organization');
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not found in session'
+                ], 400);
+            }
+
+            $file = $request->file('file');
+            $fileName = $file->getClientOriginalName();
+            
+            \Illuminate\Support\Facades\Log::info('Post scheduler media upload started', [
+                'file_name' => $fileName,
+                'file_size' => $file->getSize(),
+                'organization_id' => $organizationId
+            ]);
+            
+            // Get storage system
+            $storage = \App\Models\Setting::where('key', 'storage_system')->first();
+            $storageSystem = $storage ? $storage->value : 'local';
+
+            if ($storageSystem === 'local') {
+                $filePath = \Illuminate\Support\Facades\Storage::disk('local')->put('public/post-scheduler', $file);
+                $mediaUrl = rtrim(config('app.url'), '/') . '/media/' . ltrim($filePath, '/');
+            } else if ($storageSystem === 'aws') {
+                $uploadedFile = $file->store('uploads/post-scheduler/' . $organizationId, 's3');
+                $mediaUrl = \Illuminate\Support\Facades\Storage::disk('s3')->url($uploadedFile);
+            } else {
+                $filePath = \Illuminate\Support\Facades\Storage::disk('local')->put('public/post-scheduler', $file);
+                $mediaUrl = rtrim(config('app.url'), '/') . '/media/' . ltrim($filePath, '/');
+            }
+
+            \Illuminate\Support\Facades\Log::info('Post scheduler media upload successful', [
+                'media_url' => $mediaUrl
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'url' => $mediaUrl,
+                'path' => $mediaUrl,
+                'name' => $fileName
+            ]);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            \Illuminate\Support\Facades\Log::error('Post scheduler media upload validation error', [
+                'errors' => $e->errors()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Post scheduler media upload error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to upload media: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }
 
