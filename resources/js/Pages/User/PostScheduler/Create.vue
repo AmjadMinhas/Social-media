@@ -301,6 +301,16 @@
         files.forEach(file => {
             console.log('Processing file:', file.name, file.type, file.size);
             
+            // Check for duplicate files (same name and size)
+            const isDuplicate = selectedMediaFiles.value.some(existingFile => 
+                existingFile.name === file.name && existingFile.size === file.size
+            );
+            
+            if (isDuplicate) {
+                console.log('File already selected, skipping:', file.name);
+                return;
+            }
+            
             // Validate file type
             const validTypes = [
                 'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
@@ -331,12 +341,19 @@
             // Create preview
             const reader = new FileReader();
             reader.onload = (e) => {
-                mediaPreview.value.push({
-                    file: file,
-                    url: e.target.result,
-                    name: file.name
-                });
-                console.log('Preview added:', mediaPreview.value.length);
+                // Check if preview already exists for this file
+                const previewExists = mediaPreview.value.some(preview => 
+                    preview.name === file.name && preview.file.size === file.size
+                );
+                
+                if (!previewExists) {
+                    mediaPreview.value.push({
+                        file: file,
+                        url: e.target.result,
+                        name: file.name
+                    });
+                    console.log('Preview added:', mediaPreview.value.length);
+                }
             };
             reader.onerror = (error) => {
                 console.error('Error reading file:', error);

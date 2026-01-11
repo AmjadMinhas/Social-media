@@ -88,8 +88,23 @@
                 <div v-if="post.media && post.media.length > 0">
                     <h3 class="text-lg font-medium mb-4">{{ $t('Media') }}</h3>
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div v-for="(media, index) in post.media" :key="index" class="border rounded-lg overflow-hidden">
-                            <img :src="media" :alt="'Media ' + (index + 1)" class="w-full h-32 object-cover">
+                        <div v-for="(media, index) in post.media" :key="index" class="border rounded-lg overflow-hidden relative group">
+                            <!-- Video with thumbnail -->
+                            <div v-if="isVideo(media)" class="relative">
+                                <img 
+                                    :src="getThumbnailUrl(media) || media" 
+                                    :alt="'Video ' + (index + 1)" 
+                                    class="w-full h-32 object-cover"
+                                    @error="handleImageError"
+                                >
+                                <div class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="white" class="drop-shadow-lg">
+                                        <path d="M8 5v14l11-7z"/>
+                                    </svg>
+                                </div>
+                            </div>
+                            <!-- Image -->
+                            <img v-else :src="media" :alt="'Media ' + (index + 1)" class="w-full h-32 object-cover">
                         </div>
                     </div>
                 </div>
@@ -205,6 +220,42 @@
                 _method: 'post',
                 status: 'cancelled'
             });
+        }
+    };
+
+    const isVideo = (mediaUrl) => {
+        if (!mediaUrl) return false;
+        const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
+        const lowerUrl = mediaUrl.toLowerCase();
+        return videoExtensions.some(ext => lowerUrl.includes(ext)) || 
+               lowerUrl.includes('/video/') || 
+               lowerUrl.includes('video');
+    };
+
+    const getThumbnailUrl = (mediaUrl) => {
+        if (!mediaUrl) return null;
+        // Try to get thumbnail URL by replacing the extension or appending _thumb
+        if (isVideo(mediaUrl)) {
+            // For videos, try to find thumbnail URL (e.g., video.mp4 -> video_thumb.jpg)
+            const urlParts = mediaUrl.split('/');
+            const fileName = urlParts[urlParts.length - 1];
+            const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+            
+            // Try to find thumbnail in thumbnails directory
+            const directory = mediaUrl.substring(0, mediaUrl.lastIndexOf('/'));
+            const thumbnailUrl = directory + '/thumbnails/' + nameWithoutExt + '_thumb.jpg';
+            return thumbnailUrl;
+        }
+        // For images, use the image URL directly as thumbnail
+        return mediaUrl;
+    };
+
+    const handleImageError = (event) => {
+        // If thumbnail fails to load, fall back to original image/video URL
+        const thumbnailUrl = event.target.src;
+        const originalUrl = thumbnailUrl.replace('/thumbnails/', '/').replace('_thumb.jpg', '');
+        if (originalUrl !== thumbnailUrl) {
+            event.target.src = originalUrl;
         }
     };
 </script>

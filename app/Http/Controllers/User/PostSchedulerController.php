@@ -349,20 +349,40 @@ class PostSchedulerController extends BaseController
             } else if ($storageSystem === 'aws') {
                 $uploadedFile = $file->store('uploads/post-scheduler/' . $organizationId, 's3');
                 $mediaUrl = \Illuminate\Support\Facades\Storage::disk('s3')->url($uploadedFile);
+                $filePath = $uploadedFile;
             } else {
                 $filePath = \Illuminate\Support\Facades\Storage::disk('local')->put('public/post-scheduler', $file);
                 $mediaUrl = rtrim(config('app.url'), '/') . '/media/' . ltrim($filePath, '/');
             }
 
+            // Generate thumbnail for videos
+            $thumbnailUrl = null;
+            $fileExtension = strtolower($file->getClientOriginalExtension());
+            $mimeType = $file->getMimeType();
+            $isVideo = in_array($fileExtension, ['mp4', 'mov', 'avi']) || str_starts_with($mimeType, 'video/');
+            
+            if ($isVideo) {
+                try {
+                    $thumbnailUrl = \App\Services\ThumbnailService::generateThumbnail($file, $filePath, $storageSystem);
+                } catch (\Exception $e) {
+                    \Illuminate\Support\Facades\Log::warning('Failed to generate video thumbnail: ' . $e->getMessage());
+                    // Continue without thumbnail
+                }
+            }
+
             \Illuminate\Support\Facades\Log::info('Post scheduler media upload successful', [
-                'media_url' => $mediaUrl
+                'media_url' => $mediaUrl,
+                'thumbnail_url' => $thumbnailUrl,
+                'is_video' => $isVideo
             ]);
 
             return response()->json([
                 'success' => true,
                 'url' => $mediaUrl,
                 'path' => $mediaUrl,
-                'name' => $fileName
+                'name' => $fileName,
+                'thumbnail' => $thumbnailUrl,
+                'is_video' => $isVideo
             ]);
 
         } catch (\Illuminate\Validation\ValidationException $e) {

@@ -155,19 +155,32 @@ class LinkedInService
             if (!empty($media) && is_array($media) && count($media) > 0) {
                 $postData['specificContent']['com.linkedin.ugc.ShareContent']['shareMediaCategory'] = 'IMAGE';
                 
-                // For now, handle single image
-                // Multi-image requires more complex implementation
-                if (count($media) === 1) {
-                    $mediaUrn = $this->uploadImage($account->access_token, $personUrn, $media[0]);
+                // Upload all images and collect media URNs
+                $mediaArray = [];
+                foreach ($media as $imageUrl) {
+                    $mediaUrn = $this->uploadImage($account->access_token, $personUrn, $imageUrl);
                     
                     if ($mediaUrn) {
-                        $postData['specificContent']['com.linkedin.ugc.ShareContent']['media'] = [
-                            [
-                                'status' => 'READY',
-                                'media' => $mediaUrn,
-                            ],
+                        $mediaArray[] = [
+                            'status' => 'READY',
+                            'media' => $mediaUrn,
                         ];
                     }
+                }
+                
+                // Add all uploaded media to post data
+                if (!empty($mediaArray)) {
+                    $postData['specificContent']['com.linkedin.ugc.ShareContent']['media'] = $mediaArray;
+                    
+                    Log::info('LinkedIn publish: Media uploaded successfully', [
+                        'total_images' => count($mediaArray),
+                    ]);
+                } else {
+                    Log::warning('LinkedIn publish: No images were successfully uploaded', [
+                        'total_attempted' => count($media),
+                    ]);
+                    // If no images uploaded, remove media category
+                    $postData['specificContent']['com.linkedin.ugc.ShareContent']['shareMediaCategory'] = 'NONE';
                 }
             }
 

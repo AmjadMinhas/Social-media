@@ -1,6 +1,6 @@
 <script setup>
     import { Link } from "@inertiajs/vue3";
-    import { ref, computed } from 'vue';
+    import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
     import debounce from 'lodash/debounce';
     import { router, useForm } from '@inertiajs/vue3';
     import AlertModal from '@/Components/AlertModal.vue';
@@ -48,6 +48,13 @@
     const sixMonthsLater = new Date();
     sixMonthsLater.setMonth(today.getMonth() + 6);
     
+    function formatDateForInput(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
     const dateFrom = ref(props.filters?.date_from || formatDateForInput(today));
     const dateTo = ref(props.filters?.date_to || formatDateForInput(sixMonthsLater));
 
@@ -56,12 +63,29 @@
         selectedPlatforms.value = props.filters.platform.split(',').map(p => p.trim()).filter(p => p);
     }
 
-    function formatDateForInput(date) {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-    }
+    // Watch for filter prop changes and sync with local state
+    watch(() => props.filters, (newFilters) => {
+        if (newFilters) {
+            params.value.search = newFilters.search || '';
+            params.value.status = newFilters.status || null;
+            params.value.platform = newFilters.platform || null;
+            params.value.date_from = newFilters.date_from || null;
+            params.value.date_to = newFilters.date_to || null;
+            
+            if (newFilters.date_from) {
+                dateFrom.value = newFilters.date_from;
+            }
+            if (newFilters.date_to) {
+                dateTo.value = newFilters.date_to;
+            }
+            
+            if (newFilters.platform && newFilters.platform.trim() !== '') {
+                selectedPlatforms.value = newFilters.platform.split(',').map(p => p.trim()).filter(p => p);
+            } else {
+                selectedPlatforms.value = [];
+            }
+        }
+    }, { deep: true, immediate: true });
 
     const clearSearch = () => {
         params.value.search = '';
@@ -185,6 +209,42 @@
         return media[0];
     }
 
+    const isVideo = (mediaUrl) => {
+        if (!mediaUrl) return false;
+        const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
+        const lowerUrl = mediaUrl.toLowerCase();
+        return videoExtensions.some(ext => lowerUrl.includes(ext)) || 
+               lowerUrl.includes('/video/') || 
+               lowerUrl.includes('video');
+    }
+
+    const getThumbnailUrl = (mediaUrl) => {
+        if (!mediaUrl) return null;
+        // Try to get thumbnail URL by replacing the extension or appending _thumb
+        if (isVideo(mediaUrl)) {
+            // For videos, try to find thumbnail URL (e.g., video.mp4 -> video_thumb.jpg)
+            const urlParts = mediaUrl.split('/');
+            const fileName = urlParts[urlParts.length - 1];
+            const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+            
+            // Try to find thumbnail in thumbnails directory
+            const directory = mediaUrl.substring(0, mediaUrl.lastIndexOf('/'));
+            const thumbnailUrl = directory + '/thumbnails/' + nameWithoutExt + '_thumb.jpg';
+            return thumbnailUrl;
+        }
+        // For images, use the image URL directly as thumbnail
+        return mediaUrl;
+    }
+
+    const handleImageError = (event) => {
+        // If thumbnail fails to load, fall back to original image/video URL
+        const thumbnailUrl = event.target.src;
+        const originalUrl = thumbnailUrl.replace('/thumbnails/', '/').replace('_thumb.jpg', '');
+        if (originalUrl !== thumbnailUrl) {
+            event.target.src = originalUrl;
+        }
+    }
+
     const getPrevLink = () => {
         if (!props.rows?.links || props.rows.links.length === 0) return null;
         const prevLink = props.rows.links.find(link => link.label === '&laquo; Previous' || link.label === 'Previous');
@@ -196,6 +256,46 @@
         const nextLink = props.rows.links.find(link => link.label === 'Next &raquo;' || link.label === 'Next');
         return nextLink?.url || null;
     }
+
+    // Real-time polling - refresh data every 30 seconds
+    let pollingInterval = null;
+
+    const refreshData = () => {
+        const searchParams = {
+            ...params.value,
+            date_from: dateFrom.value,
+            date_to: dateTo.value,
+            platform: selectedPlatforms.value.length > 0 ? selectedPlatforms.value.join(',') : null
+        };
+        
+        // Remove null/empty values
+        const filteredParams = Object.fromEntries(
+            Object.entries(searchParams).filter(([_, value]) => value !== null && value !== '')
+        );
+        
+        router.visit('/post-scheduler', {
+            method: 'get',
+            data: filteredParams,
+            preserveState: true,
+            preserveScroll: true,
+            only: ['rows', 'filters'],
+        });
+    };
+
+    onMounted(() => {
+        // Start polling every 30 seconds for real-time updates
+        pollingInterval = setInterval(() => {
+            refreshData();
+        }, 30000); // 30 seconds
+    });
+
+    onUnmounted(() => {
+        // Clear polling interval when component is unmounted
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+        }
+    });
 </script>
 
 <template>
@@ -398,8 +498,19 @@
                         <!-- Media -->
                         <td class="px-6 py-4 whitespace-nowrap">
                             <Link :href="'/post-scheduler/' + item.uuid" class="block">
-                                <div v-if="getMediaThumbnail(item.media)" class="w-12 h-12 rounded-md overflow-hidden bg-gray-100">
-                                    <img :src="getMediaThumbnail(item.media)" :alt="item.title" class="w-full h-full object-cover">
+                                <div v-if="getMediaThumbnail(item.media)" class="w-12 h-12 rounded-md overflow-hidden bg-gray-100 relative">
+                                    <img 
+                                        :src="getThumbnailUrl(getMediaThumbnail(item.media)) || getMediaThumbnail(item.media)" 
+                                        :alt="item.title" 
+                                        class="w-full h-full object-cover"
+                                        @error="handleImageError"
+                                    >
+                                    <!-- Play icon overlay for videos -->
+                                    <div v-if="isVideo(getMediaThumbnail(item.media))" class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="white" class="drop-shadow-lg">
+                                            <path d="M8 5v14l11-7z"/>
+                                        </svg>
+                                    </div>
                                 </div>
                                 <div v-else class="w-12 h-12 rounded-md bg-gray-100 flex items-center justify-center">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400">
