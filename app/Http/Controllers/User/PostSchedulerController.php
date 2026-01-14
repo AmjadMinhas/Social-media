@@ -15,9 +15,30 @@ class PostSchedulerController extends BaseController
 {
     public function index(Request $request, $uuid = null)
     {
-        $organizationId = session()->get('current_organization');
-        
-        if ($uuid == null) {
+        try {
+            // Check if table exists
+            if (!\Illuminate\Support\Facades\Schema::hasTable('scheduled_posts')) {
+                \Log::error('scheduled_posts table does not exist');
+                return Redirect::route('dashboard')->with(
+                    'status', [
+                        'type' => 'error',
+                        'message' => __('Database table not found. Please run migrations.')
+                    ]
+                );
+            }
+            
+            $organizationId = session()->get('current_organization');
+            
+            if (!$organizationId) {
+                return Redirect::route('dashboard')->with(
+                    'status', [
+                        'type' => 'error',
+                        'message' => __('Please select an organization first')
+                    ]
+                );
+            }
+            
+            if ($uuid == null) {
             // List all scheduled posts
             $searchTerm = $request->query('search');
             $status = $request->query('status');
@@ -41,20 +62,30 @@ class PostSchedulerController extends BaseController
             }
             
             if ($platform) {
-                $platforms = explode(',', $platform);
-                $query->where(function ($q) use ($platforms) {
-                    foreach ($platforms as $plat) {
-                        $q->orWhereJsonContains('platforms', trim($plat));
-                    }
-                });
+                $platforms = array_filter(array_map('trim', explode(',', $platform)));
+                if (!empty($platforms)) {
+                    $query->where(function ($q) use ($platforms) {
+                        foreach ($platforms as $plat) {
+                            $q->orWhereJsonContains('platforms', $plat);
+                        }
+                    });
+                }
             }
             
             if ($dateFrom) {
-                $query->whereDate('scheduled_at', '>=', $dateFrom);
+                try {
+                    $query->whereDate('scheduled_at', '>=', $dateFrom);
+                } catch (\Exception $e) {
+                    \Log::warning('Invalid date_from filter: ' . $dateFrom);
+                }
             }
             
             if ($dateTo) {
-                $query->whereDate('scheduled_at', '<=', $dateTo);
+                try {
+                    $query->whereDate('scheduled_at', '<=', $dateTo);
+                } catch (\Exception $e) {
+                    \Log::warning('Invalid date_to filter: ' . $dateTo);
+                }
             }
             
             // Order by created_at for "now" posts, scheduled_at for scheduled posts
@@ -107,6 +138,20 @@ class PostSchedulerController extends BaseController
                 'title' => __('View Scheduled Post'),
                 'post' => $post
             ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error('PostSchedulerController error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            
+            return Redirect::back()->with(
+                'status', [
+                    'type' => 'error',
+                    'message' => 'An error occurred: ' . $e->getMessage()
+                ]
+            );
         }
     }
 

@@ -138,153 +138,89 @@ class TwitterService
                     'auth_header_preview' => 'Basic ' . substr($credentials, 0, 20) . '...',
                 ]);
                 
-                // Try using cURL directly to have complete control
-                $ch = curl_init($tokenUrl);
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_POST, true);
-                curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-                curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                    'Authorization: Basic ' . $credentials,
-                    'Content-Type: application/x-www-form-urlencoded',
-                    'Accept: application/json',
-                ]);
-                curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($formParams));
+                // Use Laravel Http facade with Basic Auth
+                $response = Http::withBasicAuth($clientId, $clientSecret)
+                    ->asForm()
+                    ->timeout(30)
+                    ->post($tokenUrl, $formParams);
                 
-                // Enable verbose for debugging (logs to error log)
-                $verbose = fopen('php://temp', 'w+');
-                curl_setopt($ch, CURLOPT_VERBOSE, true);
-                curl_setopt($ch, CURLOPT_STDERR, $verbose);
-                
-                // Enable verbose output for debugging (optional, but useful)
-                // curl_setopt($ch, CURLOPT_VERBOSE, true);
-                
-                $responseBody = curl_exec($ch);
-                $responseStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                $curlError = curl_error($ch);
-                
-                // Log verbose output if available
-                if ($verbose) {
-                    rewind($verbose);
-                    $verboseLog = stream_get_contents($verbose);
-                    fclose($verbose);
-                    if (!empty($verboseLog)) {
-                        Log::info('Twitter OAuth: cURL verbose output', ['verbose' => $verboseLog]);
-                    }
-                }
-                
-                curl_close($ch);
-                
-                if ($curlError) {
-                    Log::error('Twitter OAuth: cURL error', ['error' => $curlError]);
-                    throw new Exception('cURL error: ' . $curlError);
-                }
+                $responseStatus = $response->status();
+                $responseBody = $response->body();
+                $responseData = $response->json();
                 
                 // Log the actual response
-                Log::info('Twitter OAuth: cURL response received', [
+                Log::info('Twitter OAuth: HTTP response received', [
                     'status' => $responseStatus,
                     'response_preview' => substr($responseBody, 0, 200),
                 ]);
                 
-                // Parse response
-                $responseData = json_decode($responseBody, true);
+                // Check if response is HTML (error page)
+                $contentType = $response->header('Content-Type', '');
+                $isHtml = stripos($contentType, 'text/html') !== false || 
+                          stripos($responseBody, '<!DOCTYPE') !== false ||
+                          stripos($responseBody, '<html') !== false;
                 
-                // Create a mock response object for compatibility
-                $guzzleResponse = new class($responseStatus, $responseBody, $responseData) {
-                    private $status;
-                    private $body;
-                    private $data;
-                    public function __construct($status, $body, $data) {
-                        $this->status = $status;
-                        $this->body = $body;
-                        $this->data = $data;
+                if ($isHtml) {
+                    // Extract error message from HTML if possible
+                    $errorMessage = 'Twitter API returned an HTML error page instead of JSON. ';
+                    if (preg_match('/<title>(.*?)<\/title>/is', $responseBody, $matches)) {
+                        $errorMessage .= 'Page title: ' . strip_tags($matches[1]) . '. ';
                     }
-                    public function getStatusCode() { return $this->status; }
-                    public function getBody() { 
-                        return new class($this->body) {
-                            private $content;
-                            public function __construct($content) { $this->content = $content; }
-                            public function getContents() { return $this->content; }
-                        };
+                    // Try to extract error message from common error page patterns
+                    if (preg_match('/<h[1-6][^>]*>(.*?)<\/h[1-6]>/is', $responseBody, $matches)) {
+                        $errorMessage .= 'Error: ' . strip_tags($matches[1]) . '. ';
                     }
-                    public function getHeaders() { return []; }
-                };
+                    $errorMessage .= 'Please verify your Twitter app credentials, callback URL, and that your app has OAuth 2.0 enabled.';
+                    
+                    Log::error('Twitter OAuth: Received HTML error page', [
+                        'status' => $responseStatus,
+                        'content_type' => $contentType,
+                        'url' => $tokenUrl,
+                        'body_preview' => substr($responseBody, 0, 1000),
+                        'redirect_uri' => $redirectUri,
+                    ]);
+                    
+                    throw new Exception($errorMessage);
+                }
                 
-                $responseStatus = $guzzleResponse->getStatusCode();
-                $responseBody = $guzzleResponse->getBody()->getContents();
-                $responseHeaders = []; // cURL doesn't provide headers easily, but we don't need them
-                $responseData = $responseData; // Already parsed above
+                Log::info('Twitter OAuth token exchange response', [
+                    'status' => $responseStatus,
+                    'successful' => $responseStatus >= 200 && $responseStatus < 300,
+                    'body_length' => strlen($responseBody),
+                    'body_preview' => substr($responseBody, 0, 500),
+                    'content_type' => $contentType,
+                    'json_data' => $responseData,
+                ]);
+                
+                if ($responseStatus < 200 || $responseStatus >= 300) {
+                    Log::error('Twitter OAuth token exchange failed', [
+                        'status' => $responseStatus,
+                        'response' => $responseBody,
+                        'json_response' => $responseData,
+                    ]);
+                    throw new Exception('Failed to get access token: ' . $responseBody);
+                }
+                
+                // Validate response structure
+                if ($responseData === null || !is_array($responseData)) {
+                    Log::error('Twitter OAuth: Response is not valid JSON', [
+                        'status' => $responseStatus,
+                        'response_body' => $responseBody,
+                        'json_decode_result' => $responseData,
+                    ]);
+                    throw new Exception('Invalid token response: Response is not valid JSON. Body: ' . substr($responseBody, 0, 200));
+                }
+                
+                return $responseData;
             } catch (Exception $e) {
                 // Log the error
-                Log::error('Twitter OAuth: cURL request exception', [
+                Log::error('Twitter OAuth: HTTP request exception', [
                     'exception' => $e->getMessage(),
                     'trace' => $e->getTraceAsString(),
                 ]);
                 
                 // Throw exception
                 throw $e;
-            }
-            
-            // Check if response is HTML (error page) - this shouldn't happen for API calls
-            $contentType = is_array($responseHeaders['Content-Type'] ?? null) 
-                ? ($responseHeaders['Content-Type'][0] ?? '') 
-                : (is_array($responseHeaders['content-type'] ?? null) 
-                    ? ($responseHeaders['content-type'][0] ?? '') 
-                    : ($responseHeaders['content-type'] ?? ''));
-            
-            $isHtml = stripos($contentType, 'text/html') !== false || 
-                      stripos($responseBody, '<!DOCTYPE') !== false ||
-                      stripos($responseBody, '<html') !== false;
-            
-            if ($isHtml) {
-                // Extract error message from HTML if possible
-                $errorMessage = 'Twitter API returned an HTML error page instead of JSON. ';
-                if (preg_match('/<title>(.*?)<\/title>/is', $responseBody, $matches)) {
-                    $errorMessage .= 'Page title: ' . strip_tags($matches[1]) . '. ';
-                }
-                // Try to extract error message from common error page patterns
-                if (preg_match('/<h[1-6][^>]*>(.*?)<\/h[1-6]>/is', $responseBody, $matches)) {
-                    $errorMessage .= 'Error: ' . strip_tags($matches[1]) . '. ';
-                }
-                $errorMessage .= 'Please verify your Twitter app credentials, callback URL, and that your app has OAuth 2.0 enabled.';
-                
-                Log::error('Twitter OAuth: Received HTML error page', [
-                    'status' => $responseStatus,
-                    'content_type' => $contentType,
-                    'url' => $tokenUrl,
-                    'body_preview' => substr($responseBody, 0, 1000),
-                    'redirect_uri' => $redirectUri,
-                ]);
-                
-                throw new Exception($errorMessage);
-            }
-
-            Log::info('Twitter OAuth token exchange response', [
-                'status' => $responseStatus,
-                'successful' => $responseStatus >= 200 && $responseStatus < 300,
-                'body_length' => strlen($responseBody),
-                'body_preview' => substr($responseBody, 0, 500),
-                'content_type' => $contentType,
-                'json_data' => $responseData,
-            ]);
-
-            if ($responseStatus < 200 || $responseStatus >= 300) {
-                Log::error('Twitter OAuth token exchange failed', [
-                    'status' => $responseStatus,
-                    'response' => $responseBody,
-                    'json_response' => $responseData,
-                ]);
-                throw new Exception('Failed to get access token: ' . $responseBody);
-            }
-
-            // Validate response structure
-            if ($responseData === null || !is_array($responseData)) {
-                Log::error('Twitter OAuth: Response is not valid JSON', [
-                    'status' => $responseStatus,
-                    'response_body' => $responseBody,
-                    'json_decode_result' => $responseData,
-                ]);
-                throw new Exception('Invalid token response: Response is not valid JSON. Body: ' . substr($responseBody, 0, 200));
             }
 
             if (!isset($responseData['access_token'])) {

@@ -100,18 +100,135 @@ class FacebookService
     public function getUserPages($accessToken)
     {
         try {
+            Log::info('Facebook getUserPages: Requesting pages', [
+                'base_url' => $this->baseUrl,
+                'has_token' => !empty($accessToken),
+                'token_preview' => substr($accessToken, 0, 20) . '...'
+            ]);
+            
+            // First, get user ID to verify token works
+            $userResponse = Http::get("{$this->baseUrl}/me", [
+                'access_token' => $accessToken,
+                'fields' => 'id,name'
+            ]);
+            
+            $userId = null;
+            if ($userResponse->successful()) {
+                $userData = $userResponse->json();
+                $userId = $userData['id'] ?? null;
+                Log::info('Facebook getUserPages: User info retrieved', [
+                    'user_id' => $userId,
+                    'user_name' => $userData['name'] ?? null
+                ]);
+            }
+            
+            // Try /me/accounts first (standard endpoint)
             $response = Http::get("{$this->baseUrl}/me/accounts", [
                 'access_token' => $accessToken,
-                'fields' => 'id,name,access_token,picture',
+                'fields' => 'id,name,access_token,picture,category',
+                'limit' => 100, // Get up to 100 pages
             ]);
-
-            if ($response->failed()) {
-                throw new Exception('Failed to get user pages: ' . $response->body());
+            
+            $data = $response->json();
+            $pages = $data['data'] ?? [];
+            
+            Log::info('Facebook getUserPages: /me/accounts response', [
+                'status' => $response->status(),
+                'has_data' => isset($data['data']),
+                'pages_count' => count($pages),
+                'full_response' => $data
+            ]);
+            
+            // If no pages found, try alternative approaches
+            if (empty($pages)) {
+                // Try /me/pages as alternative
+                Log::info('Facebook getUserPages: No pages from /me/accounts, trying /me/pages');
+                $response2 = Http::get("{$this->baseUrl}/me/pages", [
+                    'access_token' => $accessToken,
+                    'fields' => 'id,name,access_token,picture',
+                    'limit' => 100,
+                ]);
+                
+                if ($response2->successful()) {
+                    $data2 = $response2->json();
+                    $pages2 = $data2['data'] ?? [];
+                    Log::info('Facebook getUserPages: /me/pages response', [
+                        'pages_count' => count($pages2),
+                        'full_response' => $data2
+                    ]);
+                    if (!empty($pages2)) {
+                        Log::info('Facebook getUserPages: Found pages via /me/pages', ['count' => count($pages2)]);
+                        $pages = $pages2;
+                        $data = $data2;
+                    }
+                }
+                
+                // If still no pages, try with user ID directly
+                if (empty($pages) && $userId) {
+                    Log::info('Facebook getUserPages: Trying with user ID', ['user_id' => $userId]);
+                    $response3 = Http::get("{$this->baseUrl}/{$userId}/accounts", [
+                        'access_token' => $accessToken,
+                        'fields' => 'id,name,access_token,picture',
+                        'limit' => 100,
+                    ]);
+                    
+                    if ($response3->successful()) {
+                        $data3 = $response3->json();
+                        $pages3 = $data3['data'] ?? [];
+                        Log::info('Facebook getUserPages: User ID accounts response', [
+                            'pages_count' => count($pages3),
+                            'full_response' => $data3
+                        ]);
+                        if (!empty($pages3)) {
+                            $pages = $pages3;
+                            $data = $data3;
+                        }
+                    }
+                }
             }
 
-            return $response->json()['data'] ?? [];
+            Log::info('Facebook getUserPages: Response received', [
+                'status' => $response->status(),
+                'successful' => $response->successful(),
+                'failed' => $response->failed(),
+                'pages_count' => count($pages)
+            ]);
+
+            if ($response->failed() && empty($pages)) {
+                $errorBody = $response->body();
+                $errorJson = $response->json();
+                
+                Log::error('Facebook get pages error', [
+                    'status' => $response->status(),
+                    'body' => $errorBody,
+                    'json' => $errorJson,
+                    'error_type' => $errorJson['error']['type'] ?? null,
+                    'error_message' => $errorJson['error']['message'] ?? null,
+                    'error_code' => $errorJson['error']['code'] ?? null
+                ]);
+                
+                throw new Exception('Failed to get user pages: ' . ($errorJson['error']['message'] ?? $errorBody));
+            }
+            
+            // Handle pagination if there are more pages
+            if (isset($data['paging']['next'])) {
+                Log::info('Facebook getUserPages: More pages available, fetching...');
+                // For now, we'll just log it - you can implement pagination if needed
+                // Most users won't have more than 100 pages
+            }
+            
+            Log::info('Facebook getUserPages: Pages retrieved', [
+                'pages_count' => count($pages),
+                'has_data_key' => isset($data['data']),
+                'response_keys' => array_keys($data ?? []),
+                'full_response' => $data // Log full response for debugging
+            ]);
+
+            return $pages;
         } catch (Exception $e) {
-            Log::error('Facebook get pages error: ' . $e->getMessage());
+            Log::error('Facebook get pages error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
             throw $e;
         }
     }

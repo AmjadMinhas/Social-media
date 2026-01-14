@@ -135,13 +135,13 @@
                             />
                             <div class="text-center">
                                 <label for="media-upload" class="cursor-pointer inline-block">
-                                    <div @click.stop="() => mediaInput?.click()" class="cursor-pointer">
+                                    <div class="cursor-pointer">
                                         <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                                         </svg>
-                                    <p class="mt-2 text-sm text-gray-600">{{ $t('Click to upload media') }}</p>
-                                    <p class="text-xs text-gray-500">{{ $t('Images (JPEG, PNG, GIF, WebP) or Videos (MP4, MOV, AVI)') }}</p>
-                                    <p class="text-xs text-gray-400 mt-1">{{ $t('Max: 10MB for images, 100MB for videos') }}</p>
+                                        <p class="mt-2 text-sm text-gray-600">{{ $t('Click to upload media') }}</p>
+                                        <p class="text-xs text-gray-500">{{ $t('Images (JPEG, PNG, GIF, WebP) or Videos (MP4, MOV, AVI)') }}</p>
+                                        <p class="text-xs text-gray-400 mt-1">{{ $t('Max: 10MB for images, 100MB for videos') }}</p>
                                     </div>
                                 </label>
                             </div>
@@ -290,20 +290,26 @@
 
     const handleMediaUpload = (event) => {
         console.log('Media upload triggered', event);
-        const files = Array.from(event.target.files || []);
-        console.log('Files selected:', files.length);
         
-        if (files.length === 0) {
+        // Get files from the input
+        const input = event.target;
+        if (!input || !input.files || input.files.length === 0) {
             console.log('No files selected');
             return;
         }
         
+        const files = Array.from(input.files);
+        console.log('Files selected:', files.length);
+        
+        // Process each file
         files.forEach(file => {
             console.log('Processing file:', file.name, file.type, file.size);
             
             // Check for duplicate files (same name and size)
             const isDuplicate = selectedMediaFiles.value.some(existingFile => 
-                existingFile.name === file.name && existingFile.size === file.size
+                existingFile.name === file.name && 
+                existingFile.size === file.size &&
+                existingFile.lastModified === file.lastModified
             );
             
             if (isDuplicate) {
@@ -314,9 +320,9 @@
             // Validate file type
             const validTypes = [
                 'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-                'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/avi'
+                'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/avi', 'video/webm'
             ];
-            const validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.mov', '.avi'];
+            const validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.mov', '.avi', '.webm'];
             
             const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
             const isValidType = validTypes.includes(file.type) || validExtensions.includes(fileExtension);
@@ -326,15 +332,16 @@
                 return;
             }
             
-            // Validate file size (max 10MB for images, 100MB for videos - Facebook allows up to 1GB but we'll limit to 100MB)
-            const maxSize = file.type.startsWith('video/') || fileExtension === '.mp4' || fileExtension === '.mov' || fileExtension === '.avi' 
+            // Validate file size (max 10MB for images, 100MB for videos)
+            const maxSize = file.type.startsWith('video/') || ['.mp4', '.mov', '.avi', '.webm'].includes(fileExtension)
                 ? 100 * 1024 * 1024 
                 : 10 * 1024 * 1024;
             if (file.size > maxSize) {
-                alert(`${file.name}: File too large. Max size: ${file.type.startsWith('video/') ? '50MB' : '10MB'}`);
+                alert(`${file.name}: File too large. Max size: ${file.type.startsWith('video/') ? '100MB' : '10MB'}`);
                 return;
             }
             
+            // Add file to selected files
             selectedMediaFiles.value.push(file);
             console.log('File added to selectedMediaFiles:', selectedMediaFiles.value.length);
             
@@ -343,7 +350,9 @@
             reader.onload = (e) => {
                 // Check if preview already exists for this file
                 const previewExists = mediaPreview.value.some(preview => 
-                    preview.name === file.name && preview.file.size === file.size
+                    preview.name === file.name && 
+                    preview.file.size === file.size &&
+                    preview.file.lastModified === file.lastModified
                 );
                 
                 if (!previewExists) {
@@ -361,10 +370,13 @@
             reader.readAsDataURL(file);
         });
         
-        // Reset input to allow selecting same file again
-        if (event.target) {
-            event.target.value = '';
-        }
+        // Reset input value AFTER processing to allow selecting same file again
+        // Use nextTick to ensure the change event has fully processed
+        setTimeout(() => {
+            if (input) {
+                input.value = '';
+            }
+        }, 100);
     };
 
     const removeMedia = (index) => {

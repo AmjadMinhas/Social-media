@@ -222,8 +222,14 @@ class UnifiedSocialInboxService
             });
         }
 
-            return $query->orderBy('latest_chat_created_at', 'desc')
-                ->paginate($filters['per_page'] ?? 20);
+        // Order by latest_chat_created_at if column exists, otherwise order by updated_at
+        if (Schema::hasColumn('contacts', 'latest_chat_created_at')) {
+            $query->orderBy('latest_chat_created_at', 'desc');
+        } else {
+            $query->orderBy('contacts.updated_at', 'desc');
+        }
+
+        return $query->paginate($filters['per_page'] ?? 20);
         } catch (\Exception $e) {
             Log::error('Error in getUnifiedContacts: ' . $e->getMessage(), [
                 'organization_id' => $organizationId,

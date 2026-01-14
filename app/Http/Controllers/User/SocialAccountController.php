@@ -12,6 +12,7 @@ use App\Services\SocialMedia\TikTokService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redirect;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Carbon\Carbon;
@@ -128,23 +129,42 @@ class SocialAccountController extends Controller
 
     public function index()
     {
-        // Debug mode - show debug page
-        if (request()->has('debug')) {
-            return view('debug-social-accounts');
-        }
+        try {
+            // Check if table exists
+            if (!\Illuminate\Support\Facades\Schema::hasTable('social_accounts')) {
+                Log::error('social_accounts table does not exist');
+                return Redirect::route('dashboard')->with(
+                    'status', [
+                        'type' => 'error',
+                        'message' => __('Database table not found. Please run migrations.')
+                    ]
+                );
+            }
+            
+            // Debug mode - show debug page
+            if (request()->has('debug')) {
+                return view('debug-social-accounts');
+            }
 
-        $organizationId = session()->get('current_organization');
+            $organizationId = session()->get('current_organization');
 
-        if (!$organizationId) {
-            Log::warning('Social accounts index: No organization ID in session', [
-                'user_id' => auth()->id(),
-                'session_id' => session()->getId(),
-                'session_keys' => array_keys(session()->all()),
-                'all_session_data' => session()->all()
-            ]);
-        }
+            if (!$organizationId) {
+                Log::warning('Social accounts index: No organization ID in session', [
+                    'user_id' => auth()->id(),
+                    'session_id' => session()->getId(),
+                    'session_keys' => array_keys(session()->all()),
+                    'all_session_data' => session()->all()
+                ]);
+                
+                return Redirect::route('dashboard')->with(
+                    'status', [
+                        'type' => 'error',
+                        'message' => __('Please select an organization first')
+                    ]
+                );
+            }
 
-        $accounts = SocialAccount::where('organization_id', $organizationId)
+            $accounts = SocialAccount::where('organization_id', $organizationId)
             ->whereNull('deleted_at') // Exclude soft-deleted accounts
             ->orderBy('created_at', 'desc')
             ->get();
@@ -178,10 +198,24 @@ class SocialAccountController extends Controller
                 ->toArray()
         ]);
 
-        return Inertia::render('User/SocialAccounts/Index', [
-            'title' => __('Social Media Accounts'),
-            'accounts' => $accounts,
-        ]);
+            return Inertia::render('User/SocialAccounts/Index', [
+                'title' => __('Social Media Accounts'),
+                'accounts' => $accounts,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('SocialAccountController error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            
+            return Redirect::back()->with(
+                'status', [
+                    'type' => 'error',
+                    'message' => 'An error occurred: ' . $e->getMessage()
+                ]
+            );
+        }
     }
 
     /**
@@ -191,6 +225,18 @@ class SocialAccountController extends Controller
     {
         $state = bin2hex(random_bytes(16));
         $organizationId = session()->get('current_organization');
+        
+        if (!$organizationId) {
+            Log::error('Facebook OAuth Redirect: No organization ID in session', [
+                'user_id' => auth()->id(),
+                'session_keys' => array_keys(session()->all())
+            ]);
+            return redirect('/social-accounts')->with('status', [
+                'type' => 'error',
+                'message' => __('Please select an organization first')
+            ]);
+        }
+        
         $isPopup = request()->has('popup') || request()->header('X-Requested-With') === 'XMLHttpRequest';
         
         // Force re-auth if explicitly requested OR if organization has no existing accounts for this platform
@@ -201,8 +247,10 @@ class SocialAccountController extends Controller
             ->exists();
         $forceReauth = request()->has('reconnect') || request()->has('force') || !$hasExistingAccounts;
         
+        // Store both oauth_organization_id (for OAuth flow) and ensure current_organization is set
         session(['oauth_state' => $state]);
         session(['oauth_organization_id' => $organizationId]);
+        session(['current_organization' => $organizationId]); // Ensure it's set
         session(['oauth_popup' => $isPopup]);
 
         Log::info('Facebook OAuth Redirect Started', [
@@ -321,21 +369,52 @@ class SocialAccountController extends Controller
             ]);
 
             if (empty($pages)) {
-                Log::warning('Facebook OAuth: No pages found', [
-                    'user_id' => auth()->id(),
-                    'organization_id' => session('oauth_organization_id'),
-                    'has_token' => !empty($longLivedToken)
-                ]);
+                // Try to get more information about why pages weren't found
+                try {
+                    $apiVersion = config('socialmedia.facebook.graph_api_version');
+                    $baseUrl = "https://graph.facebook.com/{$apiVersion}";
+                    
+                    // Check if user has pages_show_list permission
+                    $debugResponse = Http::get("{$baseUrl}/me/permissions", [
+                        'access_token' => $longLivedToken,
+                    ]);
+                    
+                    $permissions = $debugResponse->json()['data'] ?? [];
+                    $hasPagesPermission = collect($permissions)->contains(function($perm) {
+                        return ($perm['permission'] === 'pages_show_list' || $perm['permission'] === 'pages_read_engagement') 
+                            && $perm['status'] === 'granted';
+                    });
+                    
+                    Log::warning('Facebook OAuth: No pages found', [
+                        'user_id' => auth()->id(),
+                        'organization_id' => session('oauth_organization_id'),
+                        'has_token' => !empty($longLivedToken),
+                        'permissions' => $permissions,
+                        'has_pages_permission' => $hasPagesPermission,
+                        'token_preview' => substr($longLivedToken, 0, 20) . '...'
+                    ]);
+                } catch (\Exception $e) {
+                    Log::warning('Facebook OAuth: Could not check permissions', [
+                        'error' => $e->getMessage()
+                    ]);
+                }
+                
+                $errorMessage = __('No Facebook pages found. Please ensure: 1) You have created a Facebook page, 2) You have granted pages_show_list permission, 3) You are an admin of at least one page.');
                 
                 // If in popup, return error view instead of redirecting
                 if (session('oauth_popup')) {
+                    $isPopup = session('oauth_popup');
                     session()->forget('oauth_popup');
-                    return view('oauth-callback', ['error' => __('No Facebook pages found. Please create a Facebook page first.')]);
+                    Log::warning('Facebook OAuth: Returning error to popup', [
+                        'error' => $errorMessage,
+                        'is_popup' => $isPopup
+                    ]);
+                    return view('oauth-callback', ['error' => $errorMessage]);
                 }
                 
                 return redirect('/social-accounts')->with('status', [
                     'type' => 'error',
-                    'message' => __('No Facebook pages found. Please create a Facebook page first.')
+                    'message' => $errorMessage
                 ]);
             }
 
@@ -444,10 +523,16 @@ class SocialAccountController extends Controller
             $pages = session('facebook_pages', []);
             $userToken = session('facebook_user_token');
             
-            // Get organization ID from multiple sources as fallback
-            $organizationId = session('oauth_organization_id') 
-                ?? session('current_organization') 
-                ?? null;
+            // CRITICAL: Always use current_organization from session, not oauth_organization_id
+            // This ensures we use the organization the user is currently viewing, not the one
+            // from when they started the OAuth flow (which might have changed)
+            $organizationId = session('current_organization');
+            
+            // Fallback to oauth_organization_id only if current_organization is not set
+            // This handles edge cases where session might have been cleared
+            if (!$organizationId) {
+                $organizationId = session('oauth_organization_id');
+            }
             
             // If still null, try to get from authenticated user's organization
             if (!$organizationId && auth()->check()) {
@@ -522,11 +607,32 @@ class SocialAccountController extends Controller
                 $pageToken
             );
 
-            // Check if account already exists
-            $existingAccount = SocialAccount::where('organization_id', $organizationId)
+            // Check if account already exists in THIS organization (including soft-deleted)
+            // Also check if this page is connected to a DIFFERENT organization
+            $existingAccount = SocialAccount::withTrashed()
+                ->where('organization_id', $organizationId)
                 ->where('platform', 'facebook')
                 ->where('platform_user_id', $selectedPage['id'])
                 ->first();
+            
+            // Check if this page is connected to another organization
+            $accountInOtherOrg = SocialAccount::where('platform', 'facebook')
+                ->where('platform_user_id', $selectedPage['id'])
+                ->where('organization_id', '!=', $organizationId)
+                ->whereNull('deleted_at')
+                ->first();
+            
+            if ($accountInOtherOrg && !$existingAccount) {
+                Log::warning('Facebook Save Page: Page already connected to another organization', [
+                    'page_id' => $selectedPage['id'],
+                    'page_name' => $selectedPage['name'],
+                    'current_org_id' => $organizationId,
+                    'other_org_id' => $accountInOtherOrg->organization_id,
+                    'other_org_account_id' => $accountInOtherOrg->id
+                ]);
+                // Allow connection - same page can be connected to multiple organizations
+                // This is intentional behavior
+            }
 
             Log::info('Facebook Save Page: Account check', [
                 'page_id' => $selectedPage['id'],
@@ -577,11 +683,21 @@ class SocialAccountController extends Controller
             ];
 
             if ($existingAccount) {
+                // If account was soft-deleted, restore it first
+                if ($existingAccount->trashed()) {
+                    Log::info('Facebook Save Page: Restoring soft-deleted account', [
+                        'account_id' => $existingAccount->id,
+                        'account_uuid' => $existingAccount->uuid
+                    ]);
+                    $existingAccount->restore();
+                }
+                
                 Log::info('Facebook Save Page: Updating existing account', [
                     'account_id' => $existingAccount->id,
                     'account_uuid' => $existingAccount->uuid,
                     'old_is_active' => $existingAccount->is_active,
-                    'new_is_active' => $accountData['is_active']
+                    'new_is_active' => $accountData['is_active'],
+                    'was_trashed' => $existingAccount->trashed()
                 ]);
                 
                 $existingAccount->update($accountData);
@@ -801,11 +917,21 @@ class SocialAccountController extends Controller
 
             $organizationId = session('oauth_organization_id');
 
-            // Check if account already exists
-            $existingAccount = SocialAccount::where('organization_id', $organizationId)
+            // Check if account already exists (including soft-deleted)
+            // Use withTrashed() to find both active and soft-deleted accounts
+            $existingAccount = SocialAccount::withTrashed()
+                ->where('organization_id', $organizationId)
                 ->where('platform', 'linkedin')
                 ->where('platform_user_id', $personId)
                 ->first();
+
+            Log::info('LinkedIn OAuth: Account check', [
+                'organization_id' => $organizationId,
+                'person_id' => $personId,
+                'existing_account_found' => !empty($existingAccount),
+                'existing_account_id' => $existingAccount->id ?? null,
+                'existing_account_trashed' => $existingAccount ? $existingAccount->trashed() : null,
+            ]);
 
             $accountData = [
                 'uuid' => $existingAccount ? $existingAccount->uuid : Str::uuid(),
@@ -827,11 +953,76 @@ class SocialAccountController extends Controller
             ];
 
             if ($existingAccount) {
+                // If account was soft-deleted, restore it first
+                if ($existingAccount->trashed()) {
+                    Log::info('LinkedIn OAuth: Restoring soft-deleted account', [
+                        'account_id' => $existingAccount->id
+                    ]);
+                    $existingAccount->restore();
+                }
+                
+                Log::info('LinkedIn OAuth: Updating existing account', [
+                    'account_id' => $existingAccount->id
+                ]);
+                
                 $existingAccount->update($accountData);
                 $message = __('LinkedIn account reconnected successfully!');
             } else {
-                SocialAccount::create($accountData);
-                $message = __('LinkedIn account connected successfully!');
+                // Double-check if account exists (race condition protection)
+                $duplicateCheck = SocialAccount::withTrashed()
+                    ->where('organization_id', $organizationId)
+                    ->where('platform', 'linkedin')
+                    ->where('platform_user_id', $personId)
+                    ->lockForUpdate()
+                    ->first();
+                
+                if ($duplicateCheck) {
+                    Log::warning('LinkedIn OAuth: Found duplicate account on second check', [
+                        'account_id' => $duplicateCheck->id,
+                        'trashed' => $duplicateCheck->trashed()
+                    ]);
+                    
+                    if ($duplicateCheck->trashed()) {
+                        $duplicateCheck->restore();
+                    }
+                    $duplicateCheck->update($accountData);
+                    $message = __('LinkedIn account reconnected successfully!');
+                } else {
+                    Log::info('LinkedIn OAuth: Creating new account', [
+                        'organization_id' => $organizationId,
+                        'person_id' => $personId
+                    ]);
+                    
+                    try {
+                        SocialAccount::create($accountData);
+                        $message = __('LinkedIn account connected successfully!');
+                    } catch (\Illuminate\Database\QueryException $e) {
+                        // If still getting duplicate error, try to find and update
+                        if (str_contains($e->getMessage(), 'Duplicate entry')) {
+                            Log::warning('LinkedIn OAuth: Duplicate entry error, attempting to find and update', [
+                                'error' => $e->getMessage()
+                            ]);
+                            
+                            $duplicateAccount = SocialAccount::withTrashed()
+                                ->where('organization_id', $organizationId)
+                                ->where('platform', 'linkedin')
+                                ->where('platform_user_id', $personId)
+                                ->first();
+                            
+                            if ($duplicateAccount) {
+                                if ($duplicateAccount->trashed()) {
+                                    $duplicateAccount->restore();
+                                }
+                                $duplicateAccount->update($accountData);
+                                $message = __('LinkedIn account reconnected successfully!');
+                            } else {
+                                throw $e;
+                            }
+                        } else {
+                            throw $e;
+                        }
+                    }
+                }
             }
 
             // Clear session data
@@ -1154,8 +1345,9 @@ class SocialAccountController extends Controller
                 throw new \Exception('Invalid account selected');
             }
 
-            // Check if account already exists
-            $existingAccount = SocialAccount::where('organization_id', $organizationId)
+            // Check if account already exists (including soft-deleted)
+            $existingAccount = SocialAccount::withTrashed()
+                ->where('organization_id', $organizationId)
                 ->where('platform', 'instagram')
                 ->where('platform_user_id', $selectedAccount['id'])
                 ->first();
@@ -1180,6 +1372,10 @@ class SocialAccountController extends Controller
             ];
 
             if ($existingAccount) {
+                // If account was soft-deleted, restore it first
+                if ($existingAccount->trashed()) {
+                    $existingAccount->restore();
+                }
                 $existingAccount->update($accountData);
                 $message = __('Instagram account reconnected successfully!');
             } else {
@@ -1295,8 +1491,9 @@ class SocialAccountController extends Controller
 
             $organizationId = session('oauth_organization_id');
 
-            // Check if account already exists
-            $existingAccount = SocialAccount::where('organization_id', $organizationId)
+            // Check if account already exists (including soft-deleted)
+            $existingAccount = SocialAccount::withTrashed()
+                ->where('organization_id', $organizationId)
                 ->where('platform', 'twitter')
                 ->where('platform_user_id', $userId)
                 ->first();
@@ -1321,6 +1518,10 @@ class SocialAccountController extends Controller
             ];
 
             if ($existingAccount) {
+                // If account was soft-deleted, restore it first
+                if ($existingAccount->trashed()) {
+                    $existingAccount->restore();
+                }
                 $existingAccount->update($accountData);
                 $message = __('Twitter account reconnected successfully!');
             } else {
@@ -1434,8 +1635,9 @@ class SocialAccountController extends Controller
 
             $organizationId = session('oauth_organization_id');
 
-            // Check if account already exists
-            $existingAccount = SocialAccount::where('organization_id', $organizationId)
+            // Check if account already exists (including soft-deleted)
+            $existingAccount = SocialAccount::withTrashed()
+                ->where('organization_id', $organizationId)
                 ->where('platform', 'tiktok')
                 ->where('platform_user_id', $openId)
                 ->first();
@@ -1461,6 +1663,10 @@ class SocialAccountController extends Controller
             ];
 
             if ($existingAccount) {
+                // If account was soft-deleted, restore it first
+                if ($existingAccount->trashed()) {
+                    $existingAccount->restore();
+                }
                 $existingAccount->update($accountData);
                 $message = __('TikTok account reconnected successfully!');
             } else {

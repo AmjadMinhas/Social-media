@@ -6,13 +6,21 @@
                 <!-- Header with Stats and Sync Button -->
                 <div class="p-4 border-b bg-white">
                     <div class="flex items-center justify-between mb-3">
-                        <h2 class="text-lg font-semibold">Unified Social Inbox</h2>
+                        <div class="flex items-center gap-2">
+                            <h2 class="text-lg font-semibold">Unified Social Inbox</h2>
+                            <span v-if="lastSyncTime" class="text-xs text-gray-500" :title="'Last synced: ' + formatDate(lastSyncTime)">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline-block animate-spin">
+                                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                                </svg>
+                            </span>
+                        </div>
                         <button 
-                            @click="syncMessages" 
+                            @click="syncMessages(false)" 
                             :disabled="syncing"
                             class="px-3 py-1.5 bg-blue-500 text-white rounded-md text-sm hover:bg-blue-600 disabled:opacity-50"
+                            title="Auto-sync runs every 30 seconds"
                         >
-                            <span v-if="!syncing">Sync</span>
+                            <span v-if="!syncing">Sync Now</span>
                             <span v-else>Syncing...</span>
                         </button>
                     </div>
@@ -219,7 +227,7 @@
 import AppLayout from "../Layout/App.vue";
 import Pagination from '@/Components/Pagination.vue';
 import { router, useForm } from '@inertiajs/vue3';
-import { ref, watch, onMounted, nextTick, computed } from 'vue';
+import { ref, watch, onMounted, onUnmounted, nextTick, computed } from 'vue';
 import axios from 'axios';
 
 const props = defineProps({
@@ -260,6 +268,8 @@ const messageText = ref('');
 const sending = ref(false);
 const syncing = ref(false);
 const messagesContainer = ref(null);
+const autoSyncInterval = ref(null);
+const lastSyncTime = ref(null);
 
 // Transform contacts data for Pagination component
 const paginationData = computed(() => {
@@ -390,7 +400,13 @@ const sendMessage = async () => {
     }
 };
 
-const syncMessages = async () => {
+const syncMessages = async (silent = false) => {
+    // Prevent multiple simultaneous syncs
+    if (syncing.value) {
+        console.log('Sync already in progress, skipping...');
+        return;
+    }
+    
     syncing.value = true;
     
     try {
@@ -398,11 +414,24 @@ const syncMessages = async () => {
         form.post('/social-inbox/sync', {
             preserveScroll: true,
             onSuccess: () => {
-                router.reload();
+                lastSyncTime.value = new Date();
+                if (!silent) {
+                    router.reload();
+                } else {
+                    // Silent sync - just reload contacts and messages without full page reload
+                    router.reload({ 
+                        only: ['contacts', 'messages', 'stats'],
+                        preserveState: true,
+                        preserveScroll: true
+                    });
+                }
             },
             onFinish: () => {
                 syncing.value = false;
             },
+            onError: () => {
+                syncing.value = false;
+            }
         });
     } catch (error) {
         console.error('Error syncing messages:', error);
@@ -440,6 +469,25 @@ onMounted(() => {
         selectedContact: selectedContact.value
     });
     scrollToBottom();
+    
+    // Start automatic message syncing every 30 seconds
+    autoSyncInterval.value = setInterval(() => {
+        console.log('Auto-syncing messages...');
+        syncMessages(true); // Silent sync - don't show loading state
+    }, 30000); // 30 seconds
+    
+    // Initial sync after 5 seconds (give page time to load)
+    setTimeout(() => {
+        syncMessages(true);
+    }, 5000);
+});
+
+onUnmounted(() => {
+    // Clean up interval when component is destroyed
+    if (autoSyncInterval.value) {
+        clearInterval(autoSyncInterval.value);
+        autoSyncInterval.value = null;
+    }
 });
 </script>
 

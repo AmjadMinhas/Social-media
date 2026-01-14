@@ -98,18 +98,26 @@
     }, 1000);
 
     const runSearch = () => {
+        // Build search parameters, removing null/empty values
         const searchParams = {
-            ...params.value,
-            date_from: dateFrom.value,
-            date_to: dateTo.value,
+            search: params.value.search || null,
+            status: params.value.status || null,
+            date_from: dateFrom.value || null,
+            date_to: dateTo.value || null,
             platform: selectedPlatforms.value.length > 0 ? selectedPlatforms.value.join(',') : null
         };
         
+        // Remove null/empty values to clean up URL
+        const cleanParams = Object.fromEntries(
+            Object.entries(searchParams).filter(([_, value]) => value !== null && value !== '')
+        );
+        
         router.visit('/post-scheduler', {
             method: 'get',
-            data: searchParams,
+            data: cleanParams,
             preserveState: true,
             preserveScroll: true,
+            only: ['rows', 'filters'], // Only reload these props
         });
         
         setTimeout(() => {
@@ -118,7 +126,12 @@
     }
 
     const filterByStatus = (status) => {
-        params.value.status = status;
+        // If clicking the same status, clear it (toggle behavior)
+        if (params.value.status === status) {
+            params.value.status = null;
+        } else {
+            params.value.status = status;
+        }
         runSearch();
     }
 
@@ -427,7 +440,7 @@
 
                 <!-- Filter Views Dropdown -->
                 <Dropdown align="left">
-                    <button class="flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-md bg-white text-sm text-gray-700 hover:bg-gray-50">
+                    <button class="flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-md bg-white text-sm text-gray-700 hover:bg-gray-50" :class="params.status ? 'border-blue-500 bg-blue-50' : ''">
                         {{ $t('Filter Views') }}: {{ params.status ? $t(params.status.charAt(0).toUpperCase() + params.status.slice(1)) : $t('All') }}
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="6 9 12 15 18 9"></polyline>
@@ -435,10 +448,10 @@
                     </button>
                     <template #items>
                         <DropdownItemGroup>
-                            <DropdownItem @click="filterByStatus(null)">{{ $t('All') }}</DropdownItem>
-                            <DropdownItem @click="filterByStatus('scheduled')">{{ $t('Scheduled') }}</DropdownItem>
-                            <DropdownItem @click="filterByStatus('published')">{{ $t('Published') }}</DropdownItem>
-                            <DropdownItem @click="filterByStatus('failed')">{{ $t('Failed') }}</DropdownItem>
+                            <DropdownItem @click="filterByStatus(null)" :class="!params.status ? 'bg-blue-50' : ''">{{ $t('All') }}</DropdownItem>
+                            <DropdownItem @click="filterByStatus('scheduled')" :class="params.status === 'scheduled' ? 'bg-blue-50' : ''">{{ $t('Scheduled') }}</DropdownItem>
+                            <DropdownItem @click="filterByStatus('published')" :class="params.status === 'published' ? 'bg-blue-50' : ''">{{ $t('Published') }}</DropdownItem>
+                            <DropdownItem @click="filterByStatus('failed')" :class="params.status === 'failed' ? 'bg-blue-50' : ''">{{ $t('Failed') }}</DropdownItem>
                         </DropdownItemGroup>
                     </template>
                 </Dropdown>
