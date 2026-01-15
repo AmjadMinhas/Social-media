@@ -121,13 +121,44 @@ class UnifiedSocialInboxService
 
         if ($twitterAccount) {
             try {
+                Log::info('UnifiedSocialInbox: Starting Twitter sync', [
+                    'account_id' => $twitterAccount->id,
+                    'platform_user_id' => $twitterAccount->platform_user_id,
+                    'organization_id' => $organizationId
+                ]);
+                
                 $messages = $this->twitterService->fetchMessages($twitterAccount);
-                $processed = $this->twitterService->processMessages($organization, $messages);
+                
+                Log::info('UnifiedSocialInbox: Twitter messages fetched', [
+                    'messages_count' => count($messages)
+                ]);
+                
+                $processed = $this->twitterService->processMessages($organization, $messages, $twitterAccount);
+                
+                Log::info('UnifiedSocialInbox: Twitter messages processed', [
+                    'processed_count' => $processed
+                ]);
+                
                 $results['twitter'] = $processed;
                 $results['total'] += $processed;
             } catch (\Exception $e) {
-                Log::error('Twitter sync error: ' . $e->getMessage());
+                Log::error('Twitter sync error: ' . $e->getMessage(), [
+                    'account_id' => $twitterAccount->id ?? null,
+                    'organization_id' => $organizationId,
+                    'trace' => $e->getTraceAsString()
+                ]);
             }
+        } else {
+            Log::info('UnifiedSocialInbox: No active Twitter account found', [
+                'organization_id' => $organizationId,
+                'total_twitter_accounts' => SocialAccount::where('organization_id', $organizationId)
+                    ->where('platform', 'twitter')
+                    ->count(),
+                'active_twitter_accounts' => SocialAccount::where('organization_id', $organizationId)
+                    ->where('platform', 'twitter')
+                    ->where('is_active', true)
+                    ->count()
+            ]);
         }
 
         return [

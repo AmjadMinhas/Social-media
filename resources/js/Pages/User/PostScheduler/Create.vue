@@ -389,12 +389,27 @@
             return [];
         }
 
-        const uploadedUrls = [];
+        const uploadedMedia = [];
         const page = usePage();
-        const csrfToken = page.props.csrf_token || document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
         
-        for (const file of selectedMediaFiles.value) {
+        // Get CSRF token from multiple sources
+        let csrfToken = page.props.csrf_token;
+        if (!csrfToken) {
+            const metaTag = document.querySelector('meta[name="csrf-token"]');
+            csrfToken = metaTag ? metaTag.getAttribute('content') : '';
+        }
+        
+        if (!csrfToken) {
+            throw new Error('CSRF token not found. Please refresh the page and try again.');
+        }
+        
+        console.log('Starting media upload for', selectedMediaFiles.value.length, 'files');
+        
+        for (let i = 0; i < selectedMediaFiles.value.length; i++) {
+            const file = selectedMediaFiles.value[i];
             try {
+                console.log(`Uploading file ${i + 1}/${selectedMediaFiles.value.length}:`, file.name);
+                
                 const formData = new FormData();
                 formData.append('file', file);
                 formData.append('type', 'post_scheduler');
@@ -404,10 +419,13 @@
                     headers: {
                         'X-CSRF-TOKEN': csrfToken,
                         'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
                     },
                     credentials: 'same-origin',
                     body: formData
                 });
+
+                console.log('Upload response status:', response.status);
 
                 // Check if response is JSON before parsing
                 const contentType = response.headers.get('content-type');
@@ -416,33 +434,60 @@
                 if (response.ok) {
                     if (isJson) {
                         const data = await response.json();
+                        console.log('Upload response data:', data);
+                        
+                        if (data.success === false) {
+                            throw new Error(data.message || 'Upload failed');
+                        }
+                        
                         if (data.url || data.path) {
-                            uploadedUrls.push(data.url || data.path);
+                            // Store media with thumbnail if available
+                            const mediaItem = {
+                                url: data.url || data.path,
+                                thumbnail: data.thumbnail || null,
+                                is_video: data.is_video || false
+                            };
+                            uploadedMedia.push(mediaItem);
+                            console.log('Media item added:', mediaItem);
+                        } else {
+                            throw new Error('No URL returned from server');
                         }
                     } else {
                         const text = await response.text();
-                        console.error('Non-JSON response received:', text.substring(0, 200));
-                        throw new Error('Server returned non-JSON response');
+                        console.error('Non-JSON response received:', text.substring(0, 500));
+                        throw new Error('Server returned non-JSON response. Please check the server logs.');
                     }
                 } else {
+                    let errorMessage = `Upload failed with status ${response.status}`;
+                    
                     if (isJson) {
                         const errorData = await response.json();
-                        console.error('Failed to upload:', file.name, errorData);
-                        throw new Error(errorData.message || 'Upload failed');
+                        console.error('Upload error response:', errorData);
+                        errorMessage = errorData.message || errorData.error || errorMessage;
+                        
+                        // Handle validation errors
+                        if (errorData.errors) {
+                            const errorMessages = Object.values(errorData.errors).flat();
+                            errorMessage = errorMessages.join(', ');
+                        }
                     } else {
                         const text = await response.text();
-                        console.error('Non-JSON error response:', text.substring(0, 200));
-                        throw new Error(`Upload failed with status ${response.status}`);
+                        console.error('Non-JSON error response:', text.substring(0, 500));
+                        errorMessage = `Upload failed: ${text.substring(0, 200)}`;
                     }
+                    
+                    throw new Error(`${file.name}: ${errorMessage}`);
                 }
             } catch (error) {
                 console.error('Error uploading file:', file.name, error);
-                // Don't silently fail - throw to stop the process
-                throw error;
+                // Show specific error for this file
+                const errorMsg = error.message || 'Unknown error occurred';
+                throw new Error(`Failed to upload ${file.name}: ${errorMsg}`);
             }
         }
 
-        return uploadedUrls;
+        console.log('All media uploaded successfully:', uploadedMedia);
+        return uploadedMedia;
     };
 
     const submit = async (e) => {
@@ -500,12 +545,13 @@
         if (selectedMediaFiles.value.length > 0) {
             console.log('Uploading media files...', selectedMediaFiles.value.length);
             try {
-                const uploadedUrls = await uploadMediaFiles();
-                console.log('Media uploaded successfully:', uploadedUrls);
+                const uploadedMedia = await uploadMediaFiles();
+                console.log('Media uploaded successfully:', uploadedMedia);
                 
                 // Ensure form.media is set as an array
-                if (uploadedUrls && uploadedUrls.length > 0) {
-                    form.media = uploadedUrls;
+                if (uploadedMedia && uploadedMedia.length > 0) {
+                    // Store media with thumbnails
+                    form.media = uploadedMedia;
                     console.log('Form media set to:', form.media);
                 } else {
                     console.warn('No media URLs returned from upload');
@@ -513,7 +559,8 @@
                 }
             } catch (error) {
                 console.error('Error uploading media:', error);
-                alert('Failed to upload some media files. Please try again.');
+                const errorMessage = error.message || 'Failed to upload media files. Please check the file size and format, then try again.';
+                alert(errorMessage);
                 return;
             }
         } else {

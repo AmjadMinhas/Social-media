@@ -1,24 +1,33 @@
 <template>
     <AppLayout>
-        <div class="md:flex md:flex-col bg-white border-l py-4 text-[#000] overflow-y-scroll">
-            <div class="flex justify-between px-8 border-b pb-2">
-                <div>
-                    <h2 class="text-xl mb-1">{{ post.title }}</h2>
-                    <p class="flex items-center text-sm leading-6 text-gray-600">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11v5m0 5a9 9 0 1 1 0-18a9 9 0 0 1 0 18Zm.05-13v.1h-.1V8h.1Z"/></svg>
-                        <span class="ml-1 mt-1">{{ $t('Scheduled Post Details') }}</span>
-                    </p>
+        <div class="min-h-screen bg-gray-50">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                <!-- Header -->
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
+                    <div class="flex justify-between items-center px-6 py-4 border-b border-gray-200">
+                        <div>
+                            <h1 class="text-2xl font-semibold text-gray-900">{{ post.title || $t('Untitled Post') }}</h1>
+                            <p class="flex items-center text-sm text-gray-500 mt-1">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1">
+                                    <path d="M12 11v5m0 5a9 9 0 1 1 0-18a9 9 0 0 1 0 18Zm.05-13v.1h-.1V8h.1Z"/>
+                                </svg>
+                                {{ $t('Scheduled Post Details') }}
+                            </p>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <Link href="/post-scheduler" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-2">
+                                    <path d="M19 12H5M12 19l-7-7 7-7"/>
+                                </svg>
+                                {{ $t('Back to Posts') }}
+                            </Link>
+                        </div>
+                    </div>
                 </div>
-                <div class="space-x-2 flex items-center">
-                    <Link href="/post-scheduler" class="rounded-md bg-black px-3 py-2 text-sm text-white shadow-sm hover:bg-indigo-500">
-                        {{ $t('Back') }}
-                    </Link>
-                </div>
-            </div>
             
-            <div class="px-8 py-6 space-y-6">
+            <div class="space-y-6">
                 <!-- Status Banner -->
-                <div :class="getStatusBannerClass(post.status)" class="p-4 rounded-lg">
+                <div :class="getStatusBannerClass(post.status)" class="p-4 rounded-lg shadow-sm">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center space-x-3">
                             <span class="text-2xl">{{ getStatusIcon(post.status) }}</span>
@@ -45,21 +54,21 @@
                 </div>
 
                 <!-- Post Content -->
-                <div class="bg-gray-50 p-6 rounded-lg">
-                    <h3 class="text-lg font-medium mb-4">{{ $t('Post Content') }}</h3>
-                    <div class="bg-white p-4 rounded-lg border">
-                        <p class="whitespace-pre-wrap text-gray-800">{{ post.content }}</p>
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">{{ $t('Post Content') }}</h3>
+                    <div class="bg-gray-50 p-6 rounded-lg border border-gray-200">
+                        <p class="whitespace-pre-wrap text-gray-800 leading-relaxed">{{ post.content || $t('No content') }}</p>
                     </div>
                 </div>
 
                 <!-- Platforms -->
-                <div>
-                    <h3 class="text-lg font-medium mb-4">{{ $t('Target Platforms') }}</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">{{ $t('Target Platforms') }}</h3>
+                    <div v-if="uniquePlatforms.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         <div 
-                            v-for="platform in post.platforms" 
+                            v-for="platform in uniquePlatforms" 
                             :key="platform"
-                            class="flex items-center p-4 border-2 border-primary bg-blue-50 rounded-lg"
+                            class="flex items-center p-4 border-2 border-blue-200 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
                         >
                             <div class="mr-3">
                                 <!-- Facebook -->
@@ -85,34 +94,77 @@
                 </div>
 
                 <!-- Media (if any) -->
-                <div v-if="post.media && post.media.length > 0">
-                    <h3 class="text-lg font-medium mb-4">{{ $t('Media') }}</h3>
+                <div v-if="post.media && post.media.length > 0" class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">{{ $t('Media') }}</h3>
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div v-for="(media, index) in post.media" :key="index" class="border rounded-lg overflow-hidden relative group">
-                            <!-- Video with thumbnail -->
-                            <div v-if="isVideo(media)" class="relative">
-                                <img 
-                                    :src="getThumbnailUrl(media) || media" 
-                                    :alt="'Video ' + (index + 1)" 
-                                    class="w-full h-32 object-cover"
-                                    @error="handleImageError"
-                                >
-                                <div class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="white" class="drop-shadow-lg">
-                                        <path d="M8 5v14l11-7z"/>
-                                    </svg>
+                        <div v-for="(mediaItem, index) in post.media" :key="index" :data-index="index" class="border rounded-lg overflow-hidden relative group hover:shadow-lg transition-shadow">
+                            <!-- Handle new media object format {url, thumbnail, is_video} -->
+                            <template v-if="typeof mediaItem === 'object' && mediaItem !== null">
+                                <!-- Video with thumbnail -->
+                                <div v-if="mediaItem.is_video || isVideo(mediaItem.url)" class="relative">
+                                    <img 
+                                        :src="getMediaThumbnail(mediaItem)" 
+                                        :alt="'Video ' + (index + 1)" 
+                                        class="w-full h-48 object-cover"
+                                        @error="handleImageError"
+                                    >
+                                    <div class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="white" class="drop-shadow-lg">
+                                            <path d="M8 5v14l11-7z"/>
+                                        </svg>
+                                    </div>
+                                    <a 
+                                        :href="getMediaUrl(mediaItem)" 
+                                        target="_blank" 
+                                        class="absolute bottom-2 right-2 bg-black bg-opacity-70 text-white px-2 py-1 rounded text-xs hover:bg-opacity-90"
+                                    >
+                                        {{ $t('View') }}
+                                    </a>
                                 </div>
-                            </div>
-                            <!-- Image -->
-                            <img v-else :src="media" :alt="'Media ' + (index + 1)" class="w-full h-32 object-cover">
+                                <!-- Image -->
+                                <div v-else class="relative">
+                                    <img 
+                                        :src="getMediaUrl(mediaItem)" 
+                                        :alt="'Media ' + (index + 1)" 
+                                        class="w-full h-48 object-cover"
+                                        @error="handleImageError"
+                                    >
+                                    <a 
+                                        :href="getMediaUrl(mediaItem)" 
+                                        target="_blank" 
+                                        class="absolute bottom-2 right-2 bg-black bg-opacity-70 text-white px-2 py-1 rounded text-xs hover:bg-opacity-90 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    >
+                                        {{ $t('View Full') }}
+                                    </a>
+                                </div>
+                            </template>
+                            <!-- Handle legacy string format -->
+                            <template v-else>
+                                <!-- Video with thumbnail -->
+                                <div v-if="isVideo(mediaItem)" class="relative">
+                                    <img 
+                                        :src="getThumbnailUrl(mediaItem) || mediaItem" 
+                                        :alt="'Video ' + (index + 1)" 
+                                        class="w-full h-48 object-cover"
+                                        @error="handleImageError"
+                                    >
+                                    <div class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="white" class="drop-shadow-lg">
+                                            <path d="M8 5v14l11-7z"/>
+                                        </svg>
+                                    </div>
+                                </div>
+                                <!-- Image -->
+                                <img v-else :src="mediaItem" :alt="'Media ' + (index + 1)" class="w-full h-48 object-cover">
+                            </template>
                         </div>
                     </div>
                 </div>
 
                 <!-- Metadata -->
-                <div class="border-t pt-6">
-                    <h3 class="text-lg font-medium mb-4">{{ $t('Details') }}</h3>
-                    <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">{{ $t('Details') }}</h3>
+                    <dl class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <dt class="text-sm font-medium text-gray-500">{{ $t('Created At') }}</dt>
                             <dd class="mt-1 text-sm text-gray-900">{{ formatDate(post.created_at) }}</dd>
@@ -133,17 +185,18 @@
                 </div>
 
                 <!-- Actions -->
-                <div v-if="post.status === 'scheduled'" class="border-t pt-6 flex justify-end space-x-3">
+                <div v-if="post.status === 'scheduled'" class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 flex justify-end space-x-3">
                     <button 
                         @click="cancelPost" 
-                        class="px-4 py-2 border border-red-300 text-red-700 rounded-md text-sm font-medium hover:bg-red-50"
+                        class="px-4 py-2 border border-red-300 text-red-700 rounded-md text-sm font-medium hover:bg-red-50 transition-colors"
                     >
                         {{ $t('Cancel Post') }}
                     </button>
-                    <Link :href="`/post-scheduler/${post.uuid}/edit`" class="px-4 py-2 bg-primary text-white rounded-md text-sm font-medium hover:bg-primary-dark">
+                    <Link :href="`/post-scheduler/${post.uuid}/edit`" class="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors">
                         {{ $t('Edit Post') }}
                     </Link>
                 </div>
+            </div>
             </div>
         </div>
     </AppLayout>
@@ -153,6 +206,7 @@
     import AppLayout from "./../Layout/App.vue";
     import { Link, useForm } from "@inertiajs/vue3";
     import { trans } from 'laravel-vue-i18n';
+    import { computed } from 'vue';
 
     const props = defineProps(['post']);
 
@@ -167,8 +221,37 @@
     };
 
     const getPlatformName = (platform) => {
-        return platformNames[platform] || 'Facebook';
+        return platformNames[platform] || platform;
     };
+
+    // Get unique platforms - handle both array and string formats, remove duplicates
+    const uniquePlatforms = computed(() => {
+        if (!props.post || !props.post.platforms) {
+            return [];
+        }
+        
+        let platforms = props.post.platforms;
+        
+        // If it's a string, try to parse it as JSON
+        if (typeof platforms === 'string') {
+            try {
+                platforms = JSON.parse(platforms);
+            } catch (e) {
+                // If parsing fails, treat as comma-separated string
+                platforms = platforms.split(',').map(p => p.trim()).filter(p => p);
+            }
+        }
+        
+        // Ensure it's an array
+        if (!Array.isArray(platforms)) {
+            platforms = [platforms];
+        }
+        
+        // Remove duplicates and filter out empty values
+        const unique = [...new Set(platforms.map(p => String(p).toLowerCase().trim()).filter(p => p))];
+        
+        return unique;
+    });
 
     const formatDate = (dateString) => {
         const date = new Date(dateString);
@@ -225,11 +308,38 @@
 
     const isVideo = (mediaUrl) => {
         if (!mediaUrl) return false;
+        if (typeof mediaUrl === 'object' && mediaUrl.is_video) return true;
         const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
-        const lowerUrl = mediaUrl.toLowerCase();
+        const lowerUrl = String(mediaUrl).toLowerCase();
         return videoExtensions.some(ext => lowerUrl.includes(ext)) || 
                lowerUrl.includes('/video/') || 
                lowerUrl.includes('video');
+    };
+
+    const getMediaUrl = (mediaItem) => {
+        if (!mediaItem) return '';
+        // Handle new object format
+        if (typeof mediaItem === 'object' && mediaItem !== null) {
+            return mediaItem.url || '';
+        }
+        // Handle legacy string format
+        return mediaItem;
+    };
+
+    const getMediaThumbnail = (mediaItem) => {
+        if (!mediaItem) return '';
+        // Handle new object format with thumbnail
+        if (typeof mediaItem === 'object' && mediaItem !== null) {
+            if (mediaItem.thumbnail) {
+                return mediaItem.thumbnail;
+            }
+            if (mediaItem.url && isVideo(mediaItem.url)) {
+                return getThumbnailUrl(mediaItem.url);
+            }
+            return mediaItem.url || '';
+        }
+        // Handle legacy string format
+        return getThumbnailUrl(mediaItem);
     };
 
     const getThumbnailUrl = (mediaUrl) => {
@@ -237,12 +347,12 @@
         // Try to get thumbnail URL by replacing the extension or appending _thumb
         if (isVideo(mediaUrl)) {
             // For videos, try to find thumbnail URL (e.g., video.mp4 -> video_thumb.jpg)
-            const urlParts = mediaUrl.split('/');
+            const urlParts = String(mediaUrl).split('/');
             const fileName = urlParts[urlParts.length - 1];
             const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
             
             // Try to find thumbnail in thumbnails directory
-            const directory = mediaUrl.substring(0, mediaUrl.lastIndexOf('/'));
+            const directory = String(mediaUrl).substring(0, String(mediaUrl).lastIndexOf('/'));
             const thumbnailUrl = directory + '/thumbnails/' + nameWithoutExt + '_thumb.jpg';
             return thumbnailUrl;
         }
@@ -251,11 +361,25 @@
     };
 
     const handleImageError = (event) => {
-        // If thumbnail fails to load, fall back to original image/video URL
+        // If thumbnail fails to load, try to get the original URL
         const thumbnailUrl = event.target.src;
-        const originalUrl = thumbnailUrl.replace('/thumbnails/', '/').replace('_thumb.jpg', '');
-        if (originalUrl !== thumbnailUrl) {
+        // Try to extract original URL from thumbnail path
+        let originalUrl = thumbnailUrl.replace('/thumbnails/', '/').replace('_thumb.jpg', '');
+        
+        // If that doesn't work, try to find the media item and get its URL
+        if (originalUrl === thumbnailUrl && props.post.media) {
+            const mediaIndex = event.target.closest('.group')?.dataset?.index;
+            if (mediaIndex !== undefined) {
+                const mediaItem = props.post.media[mediaIndex];
+                originalUrl = getMediaUrl(mediaItem);
+            }
+        }
+        
+        if (originalUrl && originalUrl !== thumbnailUrl) {
             event.target.src = originalUrl;
+        } else {
+            // Hide the image if we can't find a replacement
+            event.target.style.display = 'none';
         }
     };
 </script>

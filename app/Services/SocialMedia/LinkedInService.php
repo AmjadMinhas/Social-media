@@ -157,7 +157,17 @@ class LinkedInService
                 
                 // Upload all images and collect media URNs
                 $mediaArray = [];
-                foreach ($media as $imageUrl) {
+                foreach ($media as $mediaItem) {
+                    // Extract URL from media item (can be string or object {url, thumbnail, is_video})
+                    $imageUrl = is_array($mediaItem) && isset($mediaItem['url']) 
+                        ? $mediaItem['url'] 
+                        : (is_string($mediaItem) ? $mediaItem : null);
+                    
+                    if (!$imageUrl) {
+                        Log::warning('LinkedIn: Invalid media item format', ['media_item' => $mediaItem]);
+                        continue;
+                    }
+                    
                     $mediaUrn = $this->uploadImage($account->access_token, $personUrn, $imageUrl);
                     
                     if ($mediaUrn) {
@@ -314,6 +324,18 @@ class LinkedInService
     protected function getLocalFilePathFromUrl($url)
     {
         try {
+            // Handle both string URLs and media objects
+            if (is_array($url)) {
+                $url = $url['url'] ?? null;
+                if (!$url) {
+                    return null;
+                }
+            }
+            
+            if (!is_string($url)) {
+                return null;
+            }
+            
             // Extract path from URL (e.g., /media/public/post-scheduler/file.png)
             $parsedUrl = parse_url($url);
             $path = $parsedUrl['path'] ?? '';

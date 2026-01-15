@@ -381,7 +381,17 @@ class FacebookService
                         $attachedMedia = [];
                         
                         // Step 1: Upload each image as unpublished photo
-                        foreach ($media as $imageUrl) {
+                        foreach ($media as $mediaItem) {
+                            // Extract URL from media item (can be string or object {url, thumbnail, is_video})
+                            $imageUrl = is_array($mediaItem) && isset($mediaItem['url']) 
+                                ? $mediaItem['url'] 
+                                : (is_string($mediaItem) ? $mediaItem : null);
+                            
+                            if (!$imageUrl) {
+                                Log::warning('Facebook: Invalid media item format', ['media_item' => $mediaItem]);
+                                continue;
+                            }
+                            
                             $localFilePath = $this->getLocalFilePathFromUrl($imageUrl);
                             
                             if ($localFilePath && file_exists($localFilePath)) {

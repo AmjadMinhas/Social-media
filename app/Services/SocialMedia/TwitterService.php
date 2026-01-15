@@ -33,6 +33,8 @@ class TwitterService
             'tweet.read',
             'tweet.write',
             'users.read',
+            'dm.read',        // Required for reading Direct Messages
+            'dm.write',       // Required for sending Direct Messages
             'offline.access', // For refresh token
         ];
 

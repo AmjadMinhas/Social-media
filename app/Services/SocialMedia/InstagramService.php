@@ -298,7 +298,16 @@ class InstagramService
             }
 
             // Single image/video post
-            $mediaUrl = $media[0];
+            $mediaItem = $media[0];
+            
+            // Extract URL from media item (can be string or object {url, thumbnail, is_video})
+            $mediaUrl = is_array($mediaItem) && isset($mediaItem['url']) 
+                ? $mediaItem['url'] 
+                : (is_string($mediaItem) ? $mediaItem : null);
+            
+            if (!$mediaUrl) {
+                throw new \Exception('Invalid media format: URL not found in media item');
+            }
             
             // Instagram requires publicly accessible URLs - ensure URL is correct
             // If it's a local ngrok URL, try to get the public URL
@@ -438,7 +447,20 @@ class InstagramService
             $children = [];
 
             // Step 1: Create containers for each image
-            foreach ($mediaUrls as $index => $imageUrl) {
+            foreach ($mediaUrls as $index => $mediaItem) {
+                // Extract URL from media item (can be string or object {url, thumbnail, is_video})
+                $imageUrl = is_array($mediaItem) && isset($mediaItem['url']) 
+                    ? $mediaItem['url'] 
+                    : (is_string($mediaItem) ? $mediaItem : null);
+                
+                if (!$imageUrl) {
+                    Log::warning('Instagram: Invalid media item format, skipping', [
+                        'index' => $index + 1,
+                        'media_item' => $mediaItem
+                    ]);
+                    continue;
+                }
+                
                 Log::info('Instagram publish: Creating container for image', [
                     'index' => $index + 1,
                     'total' => count($mediaUrls),

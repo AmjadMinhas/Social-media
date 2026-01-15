@@ -64,11 +64,58 @@ class PostSchedulerController extends BaseController
             if ($platform) {
                 $platforms = array_filter(array_map('trim', explode(',', $platform)));
                 if (!empty($platforms)) {
+                    \Log::info('Filtering by platforms', [
+                        'platforms' => $platforms,
+                        'platform_string' => $platform,
+                        'organization_id' => $organizationId
+                    ]);
+                    
+                    // Filter posts that have at least one of the selected platforms
+                    // The platforms column stores JSON array like ["twitter", "linkedin"]
                     $query->where(function ($q) use ($platforms) {
+                        $first = true;
                         foreach ($platforms as $plat) {
-                            $q->orWhereJsonContains('platforms', $plat);
+                            $normalizedPlat = strtolower(trim($plat));
+                            
+                            \Log::info('Applying platform filter', [
+                                'platform' => $plat,
+                                'normalized' => $normalizedPlat,
+                                'is_first' => $first
+                            ]);
+                            
+                            // The database stores platforms as JSON string: ["twitter"]
+                            // Simple LIKE search for the platform name (works regardless of quotes/formatting)
+                            
+                            if ($first) {
+                                // Just search for the platform name - simplest and most reliable
+                                $q->whereRaw('platforms LIKE ?', ['%' . $normalizedPlat . '%']);
+                                $first = false;
+                            } else {
+                                $q->orWhereRaw('platforms LIKE ?', ['%' . $normalizedPlat . '%']);
+                            }
                         }
                     });
+                    
+                    // Debug: Get a sample post to see actual platform format
+                    $samplePost = ScheduledPost::where('organization_id', $organizationId)
+                        ->whereNull('deleted_at')
+                        ->first();
+                    
+                    if ($samplePost) {
+                        \Log::info('Sample post platforms for debugging', [
+                            'post_id' => $samplePost->id,
+                            'platforms_raw' => $samplePost->getRawOriginal('platforms'),
+                            'platforms_casted' => $samplePost->platforms,
+                            'platforms_type' => gettype($samplePost->platforms),
+                            'is_array' => is_array($samplePost->platforms),
+                        ]);
+                    }
+                    
+                    \Log::info('Platform filter applied', [
+                        'platforms' => $platforms,
+                        'query_sql' => $query->toSql(),
+                        'query_bindings' => $query->getBindings()
+                    ]);
                 }
             }
             
@@ -88,9 +135,32 @@ class PostSchedulerController extends BaseController
                 }
             }
             
+            // Debug: Log the query before execution
+            \Log::info('Post scheduler query before execution', [
+                'sql' => $query->toSql(),
+                'bindings' => $query->getBindings(),
+                'platform_filter' => $platform ?? null,
+                'status_filter' => $status ?? null,
+                'search_filter' => $searchTerm ?? null,
+            ]);
+            
             // Order by created_at for "now" posts, scheduled_at for scheduled posts
             $paginated = $query->orderByRaw('CASE WHEN publish_type = "now" THEN created_at ELSE scheduled_at END DESC')
                 ->paginate(10);
+            
+            // Debug: Log results and sample data
+            \Log::info('Post scheduler query results', [
+                'total' => $paginated->total(),
+                'count' => $paginated->count(),
+                'platform_filter_applied' => !empty($platform),
+                'sample_platforms' => $paginated->items() ? collect($paginated->items())->take(3)->map(function($post) {
+                    return [
+                        'id' => $post->id,
+                        'platforms' => $post->platforms,
+                        'platforms_type' => gettype($post->platforms)
+                    ];
+                })->toArray() : []
+            ]);
             
             // Transform paginated data
             $rows = [
@@ -136,7 +206,7 @@ class PostSchedulerController extends BaseController
             
             return Inertia::render('User/PostScheduler/View', [
                 'title' => __('View Scheduled Post'),
-                'post' => $post
+                'post' => (new ScheduledPostResource($post))->resolve()
             ]);
             }
         } catch (\Exception $e) {
@@ -191,7 +261,8 @@ class PostSchedulerController extends BaseController
             'scheduled_from' => 'required_if:publish_type,time_range|nullable|date|after:now',
             'scheduled_to' => 'required_if:publish_type,time_range|nullable|date|after:scheduled_from',
             'media' => 'nullable|array',
-            'media.*' => 'string'
+            // Media can be either strings (legacy) or objects with url, thumbnail, is_video
+            'media.*' => 'nullable'
         ]);
 
         $organizationId = session()->get('current_organization');
@@ -220,7 +291,15 @@ class PostSchedulerController extends BaseController
             'scheduled_at' => $scheduledAt,
             'scheduled_from' => isset($validated['scheduled_from']) ? \Carbon\Carbon::parse($validated['scheduled_from']) : null,
             'scheduled_to' => isset($validated['scheduled_to']) ? \Carbon\Carbon::parse($validated['scheduled_to']) : null,
-            'media' => isset($validated['media']) && !empty($validated['media']) && is_array($validated['media']) ? json_encode($validated['media']) : null,
+            'media' => isset($validated['media']) && !empty($validated['media']) && is_array($validated['media']) 
+                ? json_encode(array_map(function($item) {
+                    // Handle both object format {url, thumbnail} and string format
+                    if (is_array($item) && isset($item['url'])) {
+                        return $item; // Already in object format
+                    }
+                    return is_string($item) ? ['url' => $item, 'thumbnail' => null, 'is_video' => false] : $item;
+                }, $validated['media'])) 
+                : null,
             'status' => 'scheduled'
         ]);
 
@@ -390,6 +469,7 @@ class PostSchedulerController extends BaseController
 
             if ($storageSystem === 'local') {
                 $filePath = \Illuminate\Support\Facades\Storage::disk('local')->put('public/post-scheduler', $file);
+                // FileController expects path relative to storage/app, so use the full path
                 $mediaUrl = rtrim(config('app.url'), '/') . '/media/' . ltrim($filePath, '/');
             } else if ($storageSystem === 'aws') {
                 $uploadedFile = $file->store('uploads/post-scheduler/' . $organizationId, 's3');
@@ -397,6 +477,7 @@ class PostSchedulerController extends BaseController
                 $filePath = $uploadedFile;
             } else {
                 $filePath = \Illuminate\Support\Facades\Storage::disk('local')->put('public/post-scheduler', $file);
+                // FileController expects path relative to storage/app, so use the full path
                 $mediaUrl = rtrim(config('app.url'), '/') . '/media/' . ltrim($filePath, '/');
             }
 

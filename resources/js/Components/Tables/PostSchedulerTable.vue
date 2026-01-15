@@ -58,9 +58,9 @@
     const dateFrom = ref(props.filters?.date_from || formatDateForInput(today));
     const dateTo = ref(props.filters?.date_to || formatDateForInput(sixMonthsLater));
 
-    // Initialize selected platforms from filter
+    // Initialize selected platforms from filter - normalize to lowercase
     if (props.filters?.platform && props.filters.platform.trim() !== '') {
-        selectedPlatforms.value = props.filters.platform.split(',').map(p => p.trim()).filter(p => p);
+        selectedPlatforms.value = props.filters.platform.split(',').map(p => p.trim().toLowerCase()).filter(p => p);
     }
 
     // Watch for filter prop changes and sync with local state
@@ -80,7 +80,7 @@
             }
             
             if (newFilters.platform && newFilters.platform.trim() !== '') {
-                selectedPlatforms.value = newFilters.platform.split(',').map(p => p.trim()).filter(p => p);
+                selectedPlatforms.value = newFilters.platform.split(',').map(p => p.trim().toLowerCase()).filter(p => p);
             } else {
                 selectedPlatforms.value = [];
             }
@@ -107,22 +107,30 @@
             platform: selectedPlatforms.value.length > 0 ? selectedPlatforms.value.join(',') : null
         };
         
+        console.log('runSearch called with params:', searchParams);
+        console.log('Selected platforms:', selectedPlatforms.value);
+        
         // Remove null/empty values to clean up URL
         const cleanParams = Object.fromEntries(
             Object.entries(searchParams).filter(([_, value]) => value !== null && value !== '')
         );
         
-        router.visit('/post-scheduler', {
+        console.log('Clean params being sent:', cleanParams);
+        
+        // Use router.visit with query parameters for GET requests
+        const queryString = new URLSearchParams(cleanParams).toString();
+        const url = queryString ? `/post-scheduler?${queryString}` : '/post-scheduler';
+        
+        router.visit(url, {
             method: 'get',
-            data: cleanParams,
             preserveState: true,
             preserveScroll: true,
             only: ['rows', 'filters'], // Only reload these props
+            onFinish: () => {
+                console.log('Search finished');
+                isSearching.value = false;
+            }
         });
-        
-        setTimeout(() => {
-            isSearching.value = false;
-        }, 500);
     }
 
     const filterByStatus = (status) => {
@@ -136,12 +144,19 @@
     }
 
     const togglePlatform = (platform) => {
-        const index = selectedPlatforms.value.indexOf(platform);
+        // Normalize platform to lowercase to match database format
+        const normalizedPlatform = platform.toLowerCase();
+        console.log('Toggle platform:', platform, 'Normalized:', normalizedPlatform, 'Current selected:', selectedPlatforms.value);
+        
+        const index = selectedPlatforms.value.indexOf(normalizedPlatform);
         if (index > -1) {
             selectedPlatforms.value.splice(index, 1);
+            console.log('Platform removed, new selection:', selectedPlatforms.value);
         } else {
-            selectedPlatforms.value.push(platform);
+            selectedPlatforms.value.push(normalizedPlatform);
+            console.log('Platform added, new selection:', selectedPlatforms.value);
         }
+        console.log('Running search with platforms:', selectedPlatforms.value);
         runSearch();
     }
 
@@ -216,45 +231,163 @@
     }
 
     const getMediaThumbnail = (media) => {
-        if (!media || !Array.isArray(media) || media.length === 0) {
+        if (!media) {
             return null;
         }
-        return media[0];
+        
+        // Handle string format (JSON string that needs parsing)
+        if (typeof media === 'string') {
+            try {
+                media = JSON.parse(media);
+            } catch (e) {
+                // If it's not JSON, treat as single URL
+                return media;
+            }
+        }
+        
+        // Handle array format
+        if (Array.isArray(media)) {
+            if (media.length === 0) {
+                return null;
+            }
+            return media[0];
+        }
+        
+        // Handle object format (single media object)
+        if (typeof media === 'object' && media !== null) {
+            return media;
+        }
+        
+        return null;
     }
 
-    const isVideo = (mediaUrl) => {
-        if (!mediaUrl) return false;
+    const isVideo = (mediaItem) => {
+        if (!mediaItem) return false;
+        
+        // Handle both object format {url, thumbnail, is_video} and string format
+        if (typeof mediaItem === 'object' && mediaItem !== null) {
+            if (mediaItem.is_video !== undefined) {
+                return mediaItem.is_video;
+            }
+            mediaItem = mediaItem.url || mediaItem;
+        }
+        
+        if (typeof mediaItem !== 'string') return false;
+        
         const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
-        const lowerUrl = mediaUrl.toLowerCase();
+        const lowerUrl = mediaItem.toLowerCase();
         return videoExtensions.some(ext => lowerUrl.includes(ext)) || 
                lowerUrl.includes('/video/') || 
                lowerUrl.includes('video');
     }
 
-    const getThumbnailUrl = (mediaUrl) => {
-        if (!mediaUrl) return null;
+    const getThumbnailUrl = (mediaItem) => {
+        if (!mediaItem) return null;
+        
+        console.log('getThumbnailUrl called with:', mediaItem, typeof mediaItem);
+        
+        // Handle object format {url, thumbnail, is_video}
+        if (typeof mediaItem === 'object' && mediaItem !== null) {
+            // If thumbnail is provided, use it
+            if (mediaItem.thumbnail) {
+                console.log('Using provided thumbnail:', mediaItem.thumbnail);
+                return mediaItem.thumbnail;
+            }
+            // Otherwise use the URL for images
+            if (mediaItem.url) {
+                // For images, use URL directly; for videos, try to construct thumbnail path
+                if (isVideo(mediaItem)) {
+                    return constructThumbnailPath(mediaItem.url);
+                }
+                return mediaItem.url;
+            }
+            return null;
+        }
+        
+        // Handle string format (legacy)
+        if (typeof mediaItem !== 'string') return null;
+        
         // Try to get thumbnail URL by replacing the extension or appending _thumb
-        if (isVideo(mediaUrl)) {
-            // For videos, try to find thumbnail URL (e.g., video.mp4 -> video_thumb.jpg)
-            const urlParts = mediaUrl.split('/');
-            const fileName = urlParts[urlParts.length - 1];
-            const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
-            
-            // Try to find thumbnail in thumbnails directory
-            const directory = mediaUrl.substring(0, mediaUrl.lastIndexOf('/'));
-            const thumbnailUrl = directory + '/thumbnails/' + nameWithoutExt + '_thumb.jpg';
-            return thumbnailUrl;
+        if (isVideo(mediaItem)) {
+            return constructThumbnailPath(mediaItem);
         }
         // For images, use the image URL directly as thumbnail
-        return mediaUrl;
+        return mediaItem;
+    }
+    
+    const constructThumbnailPath = (videoUrl) => {
+        if (!videoUrl) return null;
+        
+        // Extract filename from URL
+        const urlParts = videoUrl.split('/');
+        const fileName = urlParts[urlParts.length - 1];
+        const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+        
+        // Construct thumbnail path based on the media URL structure
+        // Media URLs are like: /media/public/post-scheduler/filename.ext
+        // Thumbnail URLs should be: /storage/post-scheduler/thumbnails/filename_thumb.jpg
+        let thumbnailUrl;
+        
+        if (videoUrl.includes('/media/')) {
+            // Media URL format: /media/public/post-scheduler/filename.ext
+            // Thumbnail should be: /storage/post-scheduler/thumbnails/filename_thumb.jpg
+            thumbnailUrl = '/storage/post-scheduler/thumbnails/' + nameWithoutExt + '_thumb.jpg';
+        } else if (videoUrl.includes('/storage/')) {
+            // Storage URL format: /storage/post-scheduler/filename.ext
+            // Thumbnail should be: /storage/post-scheduler/thumbnails/filename_thumb.jpg
+            const basePath = videoUrl.substring(0, videoUrl.lastIndexOf('/'));
+            thumbnailUrl = basePath + '/thumbnails/' + nameWithoutExt + '_thumb.jpg';
+        } else if (videoUrl.includes('/post-scheduler/')) {
+            // Direct path format
+            const basePath = videoUrl.substring(0, videoUrl.lastIndexOf('/'));
+            thumbnailUrl = basePath + '/thumbnails/' + nameWithoutExt + '_thumb.jpg';
+        } else {
+            // Fallback
+            thumbnailUrl = '/storage/post-scheduler/thumbnails/' + nameWithoutExt + '_thumb.jpg';
+        }
+        
+        console.log('Constructed thumbnail path:', thumbnailUrl, 'from:', videoUrl);
+        return thumbnailUrl;
+    }
+
+    const getMediaUrl = (mediaItem) => {
+        if (!mediaItem) return null;
+        
+        // Handle object format {url, thumbnail, is_video}
+        if (typeof mediaItem === 'object' && mediaItem !== null) {
+            return mediaItem.url || mediaItem;
+        }
+        
+        // Handle string format (legacy)
+        return mediaItem;
     }
 
     const handleImageError = (event) => {
         // If thumbnail fails to load, fall back to original image/video URL
         const thumbnailUrl = event.target.src;
+        console.log('Image error, trying fallback:', thumbnailUrl);
+        
+        // Try to get the original URL from the media item
+        const mediaItem = event.target.dataset.mediaItem;
+        if (mediaItem) {
+            try {
+                const parsed = JSON.parse(mediaItem);
+                if (parsed.url) {
+                    event.target.src = parsed.url;
+                    return;
+                }
+            } catch (e) {
+                // Not JSON, continue with string replacement
+            }
+        }
+        
+        // Fallback: try to construct original URL from thumbnail URL
         const originalUrl = thumbnailUrl.replace('/thumbnails/', '/').replace('_thumb.jpg', '');
-        if (originalUrl !== thumbnailUrl) {
+        if (originalUrl !== thumbnailUrl && originalUrl !== event.target.src) {
             event.target.src = originalUrl;
+        } else {
+            // If still fails, hide the image
+            event.target.style.display = 'none';
         }
     }
 
@@ -513,10 +646,12 @@
                             <Link :href="'/post-scheduler/' + item.uuid" class="block">
                                 <div v-if="getMediaThumbnail(item.media)" class="w-12 h-12 rounded-md overflow-hidden bg-gray-100 relative">
                                     <img 
-                                        :src="getThumbnailUrl(getMediaThumbnail(item.media)) || getMediaThumbnail(item.media)" 
+                                        :src="getThumbnailUrl(getMediaThumbnail(item.media)) || getMediaUrl(getMediaThumbnail(item.media))" 
                                         :alt="item.title" 
+                                        :data-media-item="JSON.stringify(getMediaThumbnail(item.media))"
                                         class="w-full h-full object-cover"
                                         @error="handleImageError"
+                                        loading="lazy"
                                     >
                                     <!-- Play icon overlay for videos -->
                                     <div v-if="isVideo(getMediaThumbnail(item.media))" class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30">
@@ -532,7 +667,7 @@
                                         <polyline points="21 15 16 10 5 21"></polyline>
                                     </svg>
                                 </div>
-                        </Link>
+                            </Link>
                         </td>
                         
                         <!-- Status -->
