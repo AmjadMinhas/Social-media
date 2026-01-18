@@ -456,27 +456,86 @@ class PostSchedulerController extends BaseController
 
             $file = $request->file('file');
             $fileName = $file->getClientOriginalName();
+            $fileSize = $file->getSize();
+            $mimeType = $file->getMimeType();
+            $tempPath = $file->getRealPath();
             
             \Illuminate\Support\Facades\Log::info('Post scheduler media upload started', [
                 'file_name' => $fileName,
-                'file_size' => $file->getSize(),
-                'organization_id' => $organizationId
+                'file_size' => $fileSize,
+                'file_size_mb' => round($fileSize / 1024 / 1024, 2),
+                'mime_type' => $mimeType,
+                'temp_path' => $tempPath,
+                'temp_exists' => file_exists($tempPath),
+                'temp_readable' => file_exists($tempPath) ? is_readable($tempPath) : false,
+                'organization_id' => $organizationId,
+                'upload_method' => 'web_form',
             ]);
             
             // Get storage system
             $storage = \App\Models\Setting::where('key', 'storage_system')->first();
             $storageSystem = $storage ? $storage->value : 'local';
+            
+            \Illuminate\Support\Facades\Log::info('Post scheduler: Storage system determined', [
+                'storage_system' => $storageSystem,
+                'storage_path' => storage_path('app'),
+                'storage_exists' => is_dir(storage_path('app')),
+                'storage_writable' => is_dir(storage_path('app')) ? is_writable(storage_path('app')) : false,
+                'public_storage_path' => storage_path('app/public/post-scheduler'),
+                'public_storage_exists' => is_dir(storage_path('app/public/post-scheduler')),
+                'public_storage_writable' => is_dir(storage_path('app/public/post-scheduler')) ? is_writable(storage_path('app/public/post-scheduler')) : false,
+            ]);
 
             if ($storageSystem === 'local') {
+                \Illuminate\Support\Facades\Log::info('Post scheduler: Uploading to local storage', [
+                    'destination' => 'public/post-scheduler',
+                ]);
+                
                 $filePath = \Illuminate\Support\Facades\Storage::disk('local')->put('public/post-scheduler', $file);
+                
+                $fullPath = storage_path('app/' . $filePath);
+                $fileExists = file_exists($fullPath);
+                $fileSizeAfter = $fileExists ? filesize($fullPath) : null;
+                
+                \Illuminate\Support\Facades\Log::info('Post scheduler: Local storage upload result', [
+                    'file_path' => $filePath,
+                    'full_path' => $fullPath,
+                    'file_exists' => $fileExists,
+                    'file_size_before' => $fileSize,
+                    'file_size_after' => $fileSizeAfter,
+                    'sizes_match' => $fileSizeAfter === $fileSize,
+                    'is_readable' => $fileExists ? is_readable($fullPath) : false,
+                ]);
+                
                 // FileController expects path relative to storage/app, so use the full path
                 $mediaUrl = rtrim(config('app.url'), '/') . '/media/' . ltrim($filePath, '/');
             } else if ($storageSystem === 'aws') {
+                \Illuminate\Support\Facades\Log::info('Post scheduler: Uploading to AWS S3', [
+                    'destination' => 'uploads/post-scheduler/' . $organizationId,
+                ]);
+                
                 $uploadedFile = $file->store('uploads/post-scheduler/' . $organizationId, 's3');
                 $mediaUrl = \Illuminate\Support\Facades\Storage::disk('s3')->url($uploadedFile);
                 $filePath = $uploadedFile;
+                
+                \Illuminate\Support\Facades\Log::info('Post scheduler: AWS S3 upload result', [
+                    's3_path' => $uploadedFile,
+                    'media_url' => $mediaUrl,
+                ]);
             } else {
+                \Illuminate\Support\Facades\Log::warning('Post scheduler: Unknown storage system, defaulting to local', [
+                    'storage_system' => $storageSystem,
+                ]);
+                
                 $filePath = \Illuminate\Support\Facades\Storage::disk('local')->put('public/post-scheduler', $file);
+                $fullPath = storage_path('app/' . $filePath);
+                
+                \Illuminate\Support\Facades\Log::info('Post scheduler: Default local storage upload result', [
+                    'file_path' => $filePath,
+                    'full_path' => $fullPath,
+                    'file_exists' => file_exists($fullPath),
+                ]);
+                
                 // FileController expects path relative to storage/app, so use the full path
                 $mediaUrl = rtrim(config('app.url'), '/') . '/media/' . ltrim($filePath, '/');
             }
@@ -496,10 +555,31 @@ class PostSchedulerController extends BaseController
                 }
             }
 
+            // Verify file is accessible via URL (for local storage)
+            $fileAccessible = false;
+            if ($storageSystem === 'local') {
+                $fullPath = storage_path('app/' . $filePath);
+                $fileAccessible = file_exists($fullPath) && is_readable($fullPath);
+                
+                // Test URL construction
+                $testUrl = rtrim(config('app.url'), '/') . '/media/' . ltrim($filePath, '/');
+                \Illuminate\Support\Facades\Log::info('Post scheduler: File accessibility check', [
+                    'full_path' => $fullPath,
+                    'file_exists' => file_exists($fullPath),
+                    'is_readable' => is_readable($fullPath),
+                    'constructed_url' => $testUrl,
+                    'url_matches' => $testUrl === $mediaUrl,
+                ]);
+            }
+            
             \Illuminate\Support\Facades\Log::info('Post scheduler media upload successful', [
                 'media_url' => $mediaUrl,
                 'thumbnail_url' => $thumbnailUrl,
-                'is_video' => $isVideo
+                'is_video' => $isVideo,
+                'file_path' => $filePath,
+                'storage_system' => $storageSystem,
+                'file_accessible' => $fileAccessible,
+                'organization_id' => $organizationId,
             ]);
 
             return response()->json([

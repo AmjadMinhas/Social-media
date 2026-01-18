@@ -94,69 +94,55 @@
                 </div>
 
                 <!-- Media (if any) -->
-                <div v-if="post.media && post.media.length > 0" class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div v-if="parsedMedia && parsedMedia.length > 0" class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                     <h3 class="text-lg font-semibold text-gray-900 mb-4">{{ $t('Media') }}</h3>
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div v-for="(mediaItem, index) in post.media" :key="index" :data-index="index" class="border rounded-lg overflow-hidden relative group hover:shadow-lg transition-shadow">
-                            <!-- Handle new media object format {url, thumbnail, is_video} -->
-                            <template v-if="typeof mediaItem === 'object' && mediaItem !== null">
-                                <!-- Video with thumbnail -->
-                                <div v-if="mediaItem.is_video || isVideo(mediaItem.url)" class="relative">
-                                    <img 
-                                        :src="getMediaThumbnail(mediaItem)" 
-                                        :alt="'Video ' + (index + 1)" 
-                                        class="w-full h-48 object-cover"
-                                        @error="handleImageError"
-                                    >
-                                    <div class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="white" class="drop-shadow-lg">
-                                            <path d="M8 5v14l11-7z"/>
-                                        </svg>
-                                    </div>
-                                    <a 
-                                        :href="getMediaUrl(mediaItem)" 
-                                        target="_blank" 
-                                        class="absolute bottom-2 right-2 bg-black bg-opacity-70 text-white px-2 py-1 rounded text-xs hover:bg-opacity-90"
-                                    >
-                                        {{ $t('View') }}
-                                    </a>
+                        <div 
+                            v-for="(mediaItem, index) in parsedMedia" 
+                            :key="`media-${index}-${getMediaUrl(mediaItem)}`" 
+                            :data-index="index" 
+                            class="border rounded-lg overflow-hidden relative group hover:shadow-lg transition-shadow bg-gray-100"
+                        >
+                            <!-- Video with thumbnail -->
+                            <div v-if="isVideoMedia(mediaItem)" class="relative">
+                                <img 
+                                    :src="getMediaThumbnail(mediaItem) || getMediaUrl(mediaItem) || ''" 
+                                    :alt="'Video ' + (index + 1)" 
+                                    class="w-full h-48 object-cover"
+                                    @error="handleImageError"
+                                    loading="lazy"
+                                >
+                                <div class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="white" class="drop-shadow-lg">
+                                        <path d="M8 5v14l11-7z"/>
+                                    </svg>
                                 </div>
-                                <!-- Image -->
-                                <div v-else class="relative">
-                                    <img 
-                                        :src="getMediaUrl(mediaItem)" 
-                                        :alt="'Media ' + (index + 1)" 
-                                        class="w-full h-48 object-cover"
-                                        @error="handleImageError"
-                                    >
-                                    <a 
-                                        :href="getMediaUrl(mediaItem)" 
-                                        target="_blank" 
-                                        class="absolute bottom-2 right-2 bg-black bg-opacity-70 text-white px-2 py-1 rounded text-xs hover:bg-opacity-90 opacity-0 group-hover:opacity-100 transition-opacity"
-                                    >
-                                        {{ $t('View Full') }}
-                                    </a>
-                                </div>
-                            </template>
-                            <!-- Handle legacy string format -->
-                            <template v-else>
-                                <!-- Video with thumbnail -->
-                                <div v-if="isVideo(mediaItem)" class="relative">
-                                    <img 
-                                        :src="getThumbnailUrl(mediaItem) || mediaItem" 
-                                        :alt="'Video ' + (index + 1)" 
-                                        class="w-full h-48 object-cover"
-                                        @error="handleImageError"
-                                    >
-                                    <div class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="white" class="drop-shadow-lg">
-                                            <path d="M8 5v14l11-7z"/>
-                                        </svg>
-                                    </div>
-                                </div>
-                                <!-- Image -->
-                                <img v-else :src="mediaItem" :alt="'Media ' + (index + 1)" class="w-full h-48 object-cover">
-                            </template>
+                                <a 
+                                    :href="getMediaUrl(mediaItem)" 
+                                    target="_blank" 
+                                    class="absolute bottom-2 right-2 bg-black bg-opacity-70 text-white px-2 py-1 rounded text-xs hover:bg-opacity-90"
+                                >
+                                    {{ $t('View') }}
+                                </a>
+                            </div>
+                            <!-- Image -->
+                            <div v-else class="relative">
+                                <img 
+                                    :src="getMediaUrl(mediaItem) || ''" 
+                                    :alt="'Image ' + (index + 1)" 
+                                    class="w-full h-48 object-cover"
+                                    @error="handleImageError"
+                                    @load="() => console.log('✅ Image loaded:', getMediaUrl(mediaItem))"
+                                    loading="lazy"
+                                >
+                                <a 
+                                    :href="getMediaUrl(mediaItem)" 
+                                    target="_blank" 
+                                    class="absolute bottom-2 right-2 bg-black bg-opacity-70 text-white px-2 py-1 rounded text-xs hover:bg-opacity-90 opacity-0 group-hover:opacity-100 transition-opacity"
+                                >
+                                    {{ $t('View Full') }}
+                                </a>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -306,11 +292,75 @@
         }
     };
 
-    const isVideo = (mediaUrl) => {
-        if (!mediaUrl) return false;
-        if (typeof mediaUrl === 'object' && mediaUrl.is_video) return true;
+    // Parse media array - handle both string JSON and array formats
+    const parsedMedia = computed(() => {
+        if (!props.post || !props.post.media) {
+            return [];
+        }
+        
+        let media = props.post.media;
+        
+        // If it's a string, try to parse it
+        if (typeof media === 'string') {
+            try {
+                media = JSON.parse(media);
+            } catch (e) {
+                // If parsing fails, treat as single URL string
+                return [{ url: media, thumbnail: null, is_video: false }];
+            }
+        }
+        
+        // Ensure it's an array
+        if (!Array.isArray(media)) {
+            media = [media];
+        }
+        
+        // Normalize each media item to object format
+        return media.map((item, index) => {
+            // If already an object with url property
+            if (typeof item === 'object' && item !== null && item.url) {
+                return {
+                    url: item.url,
+                    thumbnail: item.thumbnail || null,
+                    is_video: item.is_video || false
+                };
+            }
+            // If object without url (legacy format)
+            if (typeof item === 'object' && item !== null) {
+                // Check if it's a string URL wrapped in object
+                const url = item.url || Object.values(item)[0] || '';
+                return {
+                    url: url,
+                    thumbnail: item.thumbnail || null,
+                    is_video: item.is_video || false
+                };
+            }
+            // If string URL
+            if (typeof item === 'string') {
+                return {
+                    url: item,
+                    thumbnail: null,
+                    is_video: false
+                };
+            }
+            return null;
+        }).filter(item => item !== null && item.url);
+    });
+
+    const isVideoMedia = (mediaItem) => {
+        if (!mediaItem) return false;
+        
+        // Check is_video flag first
+        if (mediaItem.is_video === true) {
+            return true;
+        }
+        
+        // Check URL for video extensions
+        const url = getMediaUrl(mediaItem);
+        if (!url) return false;
+        
         const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
-        const lowerUrl = String(mediaUrl).toLowerCase();
+        const lowerUrl = String(url).toLowerCase();
         return videoExtensions.some(ext => lowerUrl.includes(ext)) || 
                lowerUrl.includes('/video/') || 
                lowerUrl.includes('video');
@@ -318,28 +368,43 @@
 
     const getMediaUrl = (mediaItem) => {
         if (!mediaItem) return '';
-        // Handle new object format
+        
+        // Handle object format {url, thumbnail, is_video}
         if (typeof mediaItem === 'object' && mediaItem !== null) {
             return mediaItem.url || '';
         }
-        // Handle legacy string format
-        return mediaItem;
+        
+        // Handle string format (legacy)
+        if (typeof mediaItem === 'string') {
+            return mediaItem;
+        }
+        
+        return '';
     };
 
     const getMediaThumbnail = (mediaItem) => {
         if (!mediaItem) return '';
-        // Handle new object format with thumbnail
+        
+        // Handle object format with thumbnail
         if (typeof mediaItem === 'object' && mediaItem !== null) {
-            if (mediaItem.thumbnail) {
+            // If thumbnail is provided, use it
+            if (mediaItem.thumbnail && mediaItem.thumbnail !== null) {
                 return mediaItem.thumbnail;
             }
-            if (mediaItem.url && isVideo(mediaItem.url)) {
+            // For videos, try to construct thumbnail path
+            if (mediaItem.is_video && mediaItem.url) {
                 return getThumbnailUrl(mediaItem.url);
             }
+            // For images, use URL directly
             return mediaItem.url || '';
         }
-        // Handle legacy string format
-        return getThumbnailUrl(mediaItem);
+        
+        // Handle string format (legacy)
+        if (typeof mediaItem === 'string') {
+            return getThumbnailUrl(mediaItem);
+        }
+        
+        return '';
     };
 
     const getThumbnailUrl = (mediaUrl) => {
@@ -361,24 +426,32 @@
     };
 
     const handleImageError = (event) => {
-        // If thumbnail fails to load, try to get the original URL
-        const thumbnailUrl = event.target.src;
-        // Try to extract original URL from thumbnail path
-        let originalUrl = thumbnailUrl.replace('/thumbnails/', '/').replace('_thumb.jpg', '');
+        console.log('❌ Image failed to load:', event.target.src);
         
-        // If that doesn't work, try to find the media item and get its URL
-        if (originalUrl === thumbnailUrl && props.post.media) {
-            const mediaIndex = event.target.closest('.group')?.dataset?.index;
-            if (mediaIndex !== undefined) {
-                const mediaItem = props.post.media[mediaIndex];
-                originalUrl = getMediaUrl(mediaItem);
+        // Try to get the media item from the data attribute or parent
+        const mediaIndex = event.target.closest('[data-index]')?.dataset?.index;
+        if (mediaIndex !== undefined && parsedMedia.value[mediaIndex]) {
+            const mediaItem = parsedMedia.value[mediaIndex];
+            const originalUrl = getMediaUrl(mediaItem);
+            
+            console.log('🔄 Trying fallback URL:', originalUrl);
+            
+            if (originalUrl && originalUrl !== event.target.src) {
+                event.target.src = originalUrl;
+                return;
             }
         }
         
-        if (originalUrl && originalUrl !== thumbnailUrl) {
+        // If still fails, try to extract from current src
+        const currentSrc = event.target.src;
+        let originalUrl = currentSrc.replace('/thumbnails/', '/').replace('_thumb.jpg', '');
+        
+        if (originalUrl && originalUrl !== currentSrc) {
+            console.log('🔄 Trying extracted URL:', originalUrl);
             event.target.src = originalUrl;
         } else {
             // Hide the image if we can't find a replacement
+            console.log('❌ No fallback available, hiding image');
             event.target.style.display = 'none';
         }
     };

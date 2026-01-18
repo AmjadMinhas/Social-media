@@ -232,32 +232,42 @@
 
     const getMediaThumbnail = (media) => {
         if (!media) {
+            console.log('getMediaThumbnail: No media provided');
             return null;
         }
+        
+        console.log('getMediaThumbnail: Input media type:', typeof media, 'Value:', media);
         
         // Handle string format (JSON string that needs parsing)
         if (typeof media === 'string') {
             try {
-                media = JSON.parse(media);
+                const parsed = JSON.parse(media);
+                console.log('getMediaThumbnail: Parsed JSON string:', parsed);
+                media = parsed;
             } catch (e) {
-                // If it's not JSON, treat as single URL
-                return media;
+                // If it's not JSON, treat as single URL string
+                console.log('getMediaThumbnail: String is not JSON, treating as URL:', media);
+                return { url: media, thumbnail: null, is_video: false };
             }
         }
         
         // Handle array format
         if (Array.isArray(media)) {
             if (media.length === 0) {
+                console.log('getMediaThumbnail: Empty array');
                 return null;
             }
+            console.log('getMediaThumbnail: Returning first item from array:', media[0]);
             return media[0];
         }
         
         // Handle object format (single media object)
         if (typeof media === 'object' && media !== null) {
+            console.log('getMediaThumbnail: Returning object:', media);
             return media;
         }
         
+        console.log('getMediaThumbnail: Unknown format, returning null');
         return null;
     }
 
@@ -289,7 +299,7 @@
         // Handle object format {url, thumbnail, is_video}
         if (typeof mediaItem === 'object' && mediaItem !== null) {
             // If thumbnail is provided, use it
-            if (mediaItem.thumbnail) {
+            if (mediaItem.thumbnail && mediaItem.thumbnail !== null) {
                 console.log('Using provided thumbnail:', mediaItem.thumbnail);
                 return mediaItem.thumbnail;
             }
@@ -297,8 +307,11 @@
             if (mediaItem.url) {
                 // For images, use URL directly; for videos, try to construct thumbnail path
                 if (isVideo(mediaItem)) {
-                    return constructThumbnailPath(mediaItem.url);
+                    const thumb = constructThumbnailPath(mediaItem.url);
+                    console.log('Video thumbnail constructed:', thumb);
+                    return thumb;
                 }
+                console.log('Using image URL as thumbnail:', mediaItem.url);
                 return mediaItem.url;
             }
             return null;
@@ -646,11 +659,12 @@
                             <Link :href="'/post-scheduler/' + item.uuid" class="block">
                                 <div v-if="getMediaThumbnail(item.media)" class="w-12 h-12 rounded-md overflow-hidden bg-gray-100 relative">
                                     <img 
-                                        :src="getThumbnailUrl(getMediaThumbnail(item.media)) || getMediaUrl(getMediaThumbnail(item.media))" 
+                                        :src="getThumbnailUrl(getMediaThumbnail(item.media)) || getMediaUrl(getMediaThumbnail(item.media)) || ''" 
                                         :alt="item.title" 
                                         :data-media-item="JSON.stringify(getMediaThumbnail(item.media))"
                                         class="w-full h-full object-cover"
                                         @error="handleImageError"
+                                        @load="() => console.log('✅ Image loaded:', getThumbnailUrl(getMediaThumbnail(item.media)) || getMediaUrl(getMediaThumbnail(item.media)))"
                                         loading="lazy"
                                     >
                                     <!-- Play icon overlay for videos -->

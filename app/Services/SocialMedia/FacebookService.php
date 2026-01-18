@@ -392,7 +392,20 @@ class FacebookService
                                 continue;
                             }
                             
+                            Log::info('Facebook publish: Processing media item', [
+                                'image_url' => $imageUrl,
+                                'media_item' => $mediaItem,
+                            ]);
+                            
                             $localFilePath = $this->getLocalFilePathFromUrl($imageUrl);
+                            
+                            Log::info('Facebook publish: File path check result', [
+                                'image_url' => $imageUrl,
+                                'local_file_path' => $localFilePath,
+                                'file_exists' => $localFilePath ? file_exists($localFilePath) : false,
+                                'file_readable' => $localFilePath && file_exists($localFilePath) ? is_readable($localFilePath) : false,
+                                'file_size' => $localFilePath && file_exists($localFilePath) ? filesize($localFilePath) : null,
+                            ]);
                             
                             if ($localFilePath && file_exists($localFilePath)) {
                                 try {

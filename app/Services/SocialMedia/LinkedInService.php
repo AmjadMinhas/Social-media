@@ -274,15 +274,45 @@ class LinkedInService
             $localFilePath = $this->getLocalFilePathFromUrl($imageUrl);
             $imageContent = null;
             
+            Log::info('LinkedIn: Checking file access', [
+                'image_url' => $imageUrl,
+                'local_file_path' => $localFilePath,
+                'local_file_exists' => $localFilePath ? file_exists($localFilePath) : false,
+                'local_file_readable' => $localFilePath && file_exists($localFilePath) ? is_readable($localFilePath) : false,
+                'local_file_size' => $localFilePath && file_exists($localFilePath) ? filesize($localFilePath) : null,
+            ]);
+            
             if ($localFilePath && file_exists($localFilePath)) {
-                Log::info('LinkedIn: Using local file', ['local_path' => $localFilePath]);
+                Log::info('LinkedIn: Using local file', [
+                    'local_path' => $localFilePath,
+                    'file_size' => filesize($localFilePath),
+                    'is_readable' => is_readable($localFilePath),
+                ]);
                 $imageContent = file_get_contents($localFilePath);
+                
+                if ($imageContent === false) {
+                    Log::error('LinkedIn: Failed to read local file', [
+                        'local_path' => $localFilePath,
+                        'file_exists' => file_exists($localFilePath),
+                        'is_readable' => is_readable($localFilePath),
+                    ]);
+                    throw new Exception('Failed to read local file: ' . $localFilePath);
+                }
             } else {
-                Log::info('LinkedIn: Downloading image from URL', ['image_url' => $imageUrl]);
+                Log::info('LinkedIn: Downloading image from URL', [
+                    'image_url' => $imageUrl,
+                    'local_path_attempted' => $localFilePath,
+                    'reason' => $localFilePath ? 'file_not_found' : 'no_local_path',
+                ]);
                 // Use Http client with timeout instead of file_get_contents
                 $imageResponse = Http::timeout(30)->get($imageUrl);
                 
                 if ($imageResponse->failed()) {
+                    Log::error('LinkedIn: Failed to download image from URL', [
+                        'image_url' => $imageUrl,
+                        'status' => $imageResponse->status(),
+                        'response' => $imageResponse->body(),
+                    ]);
                     throw new Exception('Failed to download image: ' . $imageResponse->body());
                 }
                 
@@ -328,17 +358,28 @@ class LinkedInService
             if (is_array($url)) {
                 $url = $url['url'] ?? null;
                 if (!$url) {
+                    Log::warning('LinkedIn getLocalFilePathFromUrl: No URL in array', ['url_array' => $url]);
                     return null;
                 }
             }
             
             if (!is_string($url)) {
+                Log::warning('LinkedIn getLocalFilePathFromUrl: URL is not a string', ['url_type' => gettype($url)]);
                 return null;
             }
+            
+            Log::info('LinkedIn getLocalFilePathFromUrl: Processing URL', [
+                'original_url' => $url,
+            ]);
             
             // Extract path from URL (e.g., /media/public/post-scheduler/file.png)
             $parsedUrl = parse_url($url);
             $path = $parsedUrl['path'] ?? '';
+            
+            Log::info('LinkedIn getLocalFilePathFromUrl: Parsed URL', [
+                'parsed_path' => $path,
+                'parsed_url' => $parsedUrl,
+            ]);
             
             // Remove /media prefix if present
             if (strpos($path, '/media/') === 0) {
@@ -349,6 +390,13 @@ class LinkedInService
             if (strpos($path, 'public/') === 0) {
                 $relativePath = substr($path, 7); // Remove 'public/' (7 chars)
                 $storagePath = storage_path('app/public/' . $relativePath);
+                
+                Log::info('LinkedIn getLocalFilePathFromUrl: Constructed storage path', [
+                    'relative_path' => $relativePath,
+                    'storage_path' => $storagePath,
+                    'storage_path_exists' => file_exists($storagePath),
+                    'storage_path_readable' => file_exists($storagePath) ? is_readable($storagePath) : false,
+                ]);
                 
                 if (file_exists($storagePath)) {
                     return $storagePath;
